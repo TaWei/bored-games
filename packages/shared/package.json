@@ -1,0 +1,29 @@
+{
+  "name": "@bored-games/shared",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    },
+    "./games": {
+      "import": "./src/games/index.ts",
+      "types": "./src/games/index.ts"
+    },
+    "./utils": {
+      "import": "./src/utils/index.ts",
+      "types": "./src/utils/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "build:dist": "tsc --project tsconfig.json",
+    "watch": "tsc --project tsconfig.json --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
