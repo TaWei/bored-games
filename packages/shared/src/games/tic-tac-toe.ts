@@ -2,16 +2,13 @@
 // TIC-TAC-TOE GAME ENGINE
 // ============================================================
 
+import type { GameEngine } from './types';
 import type {
-  GameEngine,
   GameState,
   Move,
   MoveResult,
   GameEnd,
-} from '../types';
-import type {
   TicTacToeState,
-  TicTacToeMove,
   TicTacToeMove,
 } from '../types';
 
@@ -21,22 +18,27 @@ export const TTT_O = 'O';
 export const EMPTY = '';
 
 export const BOARD_SIZE = 3;
-export const WIN_LENGTH = 3;
 
-// All 8 winning lines: [row, col] pairs
-const WINNING_LINES: readonly [number, number][][] = [
+// Flat index → [row, col]
+const INDEX_TO_POS = Array.from({ length: 9 }, (_, i) => [
+  Math.floor(i / BOARD_SIZE),
+  i % BOARD_SIZE,
+] as [number, number]);
+
+// All winning lines as flat indices 0-8
+const WINNING_LINES: readonly [number, number, number][] = [
   // Rows
-  [[0, 0], [0, 1], [0, 2]],
-  [[1, 0], [1, 1], [1, 2]],
-  [[2, 0], [2, 1], [2, 2]],
+  [0, 1, 2],
+  [3, 4, 5],
+  [6, 7, 8],
   // Columns
-  [[0, 0], [1, 0], [2, 0]],
-  [[0, 1], [1, 1], [2, 1]],
-  [[0, 2], [1, 2], [2, 2]],
+  [0, 3, 6],
+  [1, 4, 7],
+  [2, 5, 8],
   // Diagonals
-  [[0, 0], [1, 1], [2, 2]],
-  [[0, 2], [1, 1], [2, 0]],
-] as const;
+  [0, 4, 8],
+  [2, 4, 6],
+];
 
 // ----- Board helpers -----
 
@@ -46,12 +48,15 @@ function createEmptyBoard(): string[][] {
   );
 }
 
-function checkWinner(board: string[][]): [string, [number, number][]] | null {
+function checkWinner(board: string[][]): [string, number[]] | null {
   for (const line of WINNING_LINES) {
     const [a, b, c] = line;
-    const valA = board[a[0]][a[1]];
-    const valB = board[b[0]][b[1]];
-    const valC = board[c[0]][c[1]];
+    const [ra, ca] = INDEX_TO_POS[a];
+    const [rb, cb] = INDEX_TO_POS[b];
+    const [rc, cc] = INDEX_TO_POS[c];
+    const valA = board[ra][ca];
+    const valB = board[rb][cb];
+    const valC = board[rc][cc];
     if (valA && valA === valB && valB === valC) {
       return [valA, [a, b, c]];
     }
@@ -63,10 +68,7 @@ function isBoardFull(board: string[][]): boolean {
   return board.every((row) => row.every((cell) => cell !== EMPTY));
 }
 
-function getNextPlayer(
-  players: string[],
-  currentTurn: string
-): string {
+function getNextPlayer(players: string[], currentTurn: string): string {
   const idx = players.indexOf(currentTurn);
   return players[(idx + 1) % players.length];
 }
@@ -125,16 +127,17 @@ export const ticTacToeEngine: GameEngine<
       };
     }
 
-    const { cell } = move;
-    const [row, col] = cell;
+    const { cell } = move; // 0-8 flat index
 
     // Out of bounds?
-    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) {
+    if (cell < 0 || cell > 8) {
       return {
         ok: false,
         error: { code: 'MOVE_OUT_OF_RANGE', message: 'Cell is out of bounds.' },
       };
     }
+
+    const [row, col] = INDEX_TO_POS[cell];
 
     // Cell already occupied?
     if (state.board[row][col] !== EMPTY) {
@@ -154,10 +157,11 @@ export const ticTacToeEngine: GameEngine<
     // Check for winner
     const winnerResult = checkWinner(newBoard);
     let result: GameEnd | undefined;
+    let winningIndices: number[] | undefined;
 
     if (winnerResult) {
-      const [winnerSymbol] = winnerResult;
-      // Find the winner's sessionId
+      const winnerSymbol = winnerResult[0];
+      winningIndices = winnerResult[1];
       const winnerIdx = winnerSymbol === TTT_X ? 0 : 1;
       const winnerId = state.players[winnerIdx];
       result = { winner: winnerId, reason: 'THREE_IN_A_ROW' };
@@ -171,7 +175,9 @@ export const ticTacToeEngine: GameEngine<
       moveCount: state.moveCount + 1,
       turn: result ? state.turn : getNextPlayer(state.players, state.turn),
       result,
-      winningLine: winnerResult ? (winnerResult[1] as [number, number][]) : undefined,
+      winningLine: winningIndices
+        ? winningIndices.map((i: number) => INDEX_TO_POS[i])
+        : undefined,
       updatedAt: Date.now(),
     };
 
@@ -183,9 +189,9 @@ export const ticTacToeEngine: GameEngine<
     if (isBoardFull(state.board)) {
       return { winner: null, reason: 'BOARD_FULL' };
     }
-    if (checkWinner(state.board)) {
-      // Should have been caught in applyMove, but belt-and-suspenders
-      const winnerSymbol = checkWinner(state.board)![0];
+    const winnerResult = checkWinner(state.board);
+    if (winnerResult) {
+      const [winnerSymbol] = winnerResult;
       const winnerIdx = winnerSymbol === TTT_X ? 0 : 1;
       return { winner: state.players[winnerIdx], reason: 'THREE_IN_A_ROW' };
     }
@@ -197,8 +203,7 @@ export const ticTacToeEngine: GameEngine<
   },
 
   deserialize(data: string): TicTacToeState {
-    const parsed = JSON.parse(data);
-    return parsed as TicTacToeState;
+    return JSON.parse(data) as TicTacToeState;
   },
 
   isValidMove(state: TicTacToeState, move: TicTacToeMove, playerId: string): boolean {
@@ -210,11 +215,10 @@ export const ticTacToeEngine: GameEngine<
     if (state.turn !== playerId) return [];
 
     const moves: TicTacToeMove[] = [];
-    for (let r = 0; r < BOARD_SIZE; r++) {
-      for (let c = 0; c < BOARD_SIZE; c++) {
-        if (state.board[r][c] === EMPTY) {
-          moves.push({ type: 'PLACE_MARK', cell: [r, c] });
-        }
+    for (let i = 0; i < 9; i++) {
+      const [r, c] = INDEX_TO_POS[i];
+      if (state.board[r][c] === EMPTY) {
+        moves.push({ type: 'PLACE_MARK', cell: i });
       }
     }
     return moves;

@@ -28,6 +28,7 @@ interface RoomState {
   setError: (error: string | null) => void;
 }
 
+// Alias for ergonomic usage
 export const useRoomStore = create<RoomState>((set) => ({
   room: null,
   mySymbol: null,
@@ -35,7 +36,7 @@ export const useRoomStore = create<RoomState>((set) => ({
   error: null,
   isSpectator: false,
 
-  setRoom: (room, symbol = null, isSpectator = false) =>
+  setRoom: (room, symbol = undefined, isSpectator = false) =>
     set({ room, mySymbol: symbol, isSpectator, error: null }),
 
   updateRoom: (patch) =>
@@ -93,3 +94,6 @@ export const useRoomStore = create<RoomState>((set) => ({
 
   setError: (error) => set({ error }),
 }));
+
+// Alias for ergonomic usage in components
+export const useRoom = useRoomStore;

@@ -93,3 +93,23 @@ export async function getLeaderboard(
 ): Promise<unknown> {
   return apiFetch(`/leaderboard/${gameType}?limit=${limit}`);
 }
+
+// ----- Matchmaking Queue -----
+
+export async function addToQueue(
+  gameType: string,
+  displayName?: string
+): Promise<{ queued: boolean; position: number; gameType: string }> {
+  return apiFetch('/rooms/queue', {
+    method: 'POST',
+    body: JSON.stringify({ gameType, displayName }),
+  });
+}
+
+export async function removeFromQueue(
+  gameType: string
+): Promise<{ queued: boolean }> {
+  return apiFetch(`/rooms/queue?gameType=${encodeURIComponent(gameType)}`, {
+    method: 'DELETE',
+  });
+}

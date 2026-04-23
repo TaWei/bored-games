@@ -6,7 +6,7 @@ import { useCallback } from 'react';
 import { useWebSocket } from './useWebSocket';
 import { useRoomStore } from '../stores/room';
 import { useGameStore } from '../stores/game';
-import type { TicTacToeMove, Move } from '@bored-games/shared';
+import type { TicTacToeMove } from '@bored-games/shared';
 
 interface UseGameOptions {
   roomCode: string;
@@ -14,9 +14,12 @@ interface UseGameOptions {
   enabled?: boolean;
 }
 
-export function useGame(opts: UseGameOptions) {
-  const ws = useWebSocket(opts);
+export function useGame(opts?: UseGameOptions) {
+  // If no opts provided, derive from room store
   const { room } = useRoomStore();
+  const roomCode = opts?.roomCode ?? room?.code ?? '';
+
+  const ws = useWebSocket({ roomCode, ...opts });
   const { state, isMyTurn, lastMove, mySessionId } = useGameStore();
 
   const sendMove = useCallback(

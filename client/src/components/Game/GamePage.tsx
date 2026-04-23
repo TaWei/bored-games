@@ -12,13 +12,14 @@ import { PlayerBadge } from './PlayerBadge';
 import { GameStatus } from './GameStatus';
 import { Button } from '../Shared/Button';
 import { useState } from 'react';
+import type { Player } from '@bored-games/shared';
 
 export function GamePage() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
   const { session } = useSession();
-  const { room, isLoading, error, disconnect } = useRoom();
-  const { sendLeave, sendResign } = useGame();
+  const { room, isLoading, error } = useRoom();
+  const { leaveRoom, resign } = useGame();
   const [showShareToast, setShowShareToast] = useState(false);
 
   const shareLink = `${window.location.origin}/room/${code}`;
@@ -29,19 +30,13 @@ export function GamePage() {
       setShowShareToast(true);
       setTimeout(() => setShowShareToast(false), 2000);
     } catch {
-      // Fallback for browsers without clipboard API
       prompt('Copy this link to share:', shareLink);
     }
   };
 
   const handleLeave = () => {
-    sendLeave();
-    disconnect();
+    leaveRoom();
     navigate('/');
-  };
-
-  const handleResign = () => {
-    sendResign();
   };
 
   // Loading state
@@ -73,9 +68,8 @@ export function GamePage() {
     );
   }
 
-  const isHost = room.hostSessionId === session?.id;
-  const myPlayer = room.players.find((p) => p.sessionId === session?.id);
-  const opponent = room.players.find((p) => p.sessionId !== session?.id);
+  const { state } = useGame();
+  const myPlayer = room.players.find((p: Player) => p.sessionId === session.id);
   const isSpectating = !myPlayer && room.status !== 'waiting';
 
   return (
@@ -117,7 +111,7 @@ export function GamePage() {
               <div className="waiting-players">
                 <PlayerBadge
                   name={myPlayer?.displayName ?? 'You'}
-                  isHost
+                  isHost={myPlayer?.sessionId === room.hostSessionId}
                   isYou
                   isReady={false}
                 />
@@ -133,20 +127,17 @@ export function GamePage() {
         )}
 
         {/* Game in progress or ended */}
-        {(room.status === 'playing' || room.status === 'game_over') && (
+        {(room.status === 'in_progress' || room.status === 'completed') && (
           <div className="active-game">
             {/* Player bar */}
             <div className="player-bar">
-              {room.players.map((player) => (
+              {room.players.map((player: Player) => (
                 <PlayerBadge
                   key={player.sessionId}
                   name={player.displayName}
-                  isYou={player.sessionId === session?.id}
+                  isYou={player.sessionId === session.id}
                   isHost={player.sessionId === room.hostSessionId}
-                  turn={
-                    room.game?.currentPlayerId ===
-                    player.sessionId
-                  }
+                  turn={state?.turn === player.sessionId}
                 />
               ))}
               {isSpectating && (
@@ -159,21 +150,21 @@ export function GamePage() {
 
             {/* Game board */}
             <div className="board-container">
-              {room.game?.type === 'tic-tac-toe' && <TicTacToeBoard />}
+              {state?.gameType === 'tic-tac-toe' && <TicTacToeBoard />}
             </div>
 
             {/* Game actions */}
             <div className="game-actions">
-              {room.status === 'playing' && myPlayer && (
+              {room.status === 'in_progress' && myPlayer && (
                 <Button
                   variant="danger"
                   size="sm"
-                  onClick={handleResign}
+                  onClick={resign}
                 >
                   Resign
                 </Button>
               )}
-              {room.status === 'game_over' && (
+              {room.status === 'completed' && (
                 <Button
                   variant="primary"
                   onClick={() => navigate('/')}

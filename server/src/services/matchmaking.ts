@@ -63,7 +63,7 @@ export async function processQueue(gameType: GameType): Promise<void> {
   const engine = { minPlayers: 2, maxPlayers: 2 } as const; // TODO: pull from engine
 
   // Get the first N players from the queue
-  const players = await redis.zrange(key, 0, engine.minPlayers - 2); // -2 because we need at least 2
+  const players = await redis.zrange(key, 0, engine.minPlayers - 1); // -2 because we need at least 2
 
   if (players.length < engine.minPlayers) {
     return; // Not enough players

@@ -39,7 +39,7 @@ export class GameSocket {
     this.ws = new WebSocket(url);
 
     this.ws.addEventListener('open', () => {
-      if (window.__DEV__) console.log('🔌 WS connected');
+      if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('🔌 WS connected');
       this.reconnectDelay = 1_000;
 
       // Send any queued messages
@@ -59,7 +59,7 @@ export class GameSocket {
     });
 
     this.ws.addEventListener('close', (event) => {
-      if (window.__DEV__) console.log(`🔌 WS closed code=${event.code} reason=${event.reason}`);
+      if (typeof __DEV__ !== 'undefined' && __DEV__) console.log(`🔌 WS closed code=${event.code} reason=${event.reason}`);
       if (!this.intentionallyClosed && event.code !== 1000) {
         this.scheduleReconnect();
       }
@@ -173,7 +173,7 @@ export class GameSocket {
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
 
-    if (window.__DEV__) {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
       console.log(`🔌 WS reconnecting in ${this.reconnectDelay}ms...`);
     }
 

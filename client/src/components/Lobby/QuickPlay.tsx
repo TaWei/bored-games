@@ -41,7 +41,7 @@ export function QuickPlay() {
       clearInterval(pollIntervalRef.current);
     }
     try {
-      await removeFromQueue(selectedGame, sessionId);
+      await removeFromQueue(selectedGame);
     } catch {
       // ignore
     }

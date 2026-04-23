@@ -6,7 +6,7 @@ import { useMemo } from 'react';
 import { useRoom } from '../../stores/room';
 import { useGame } from '../../hooks/useGame';
 import { useSession } from '../../hooks/useSession';
-import type { TicTacToeState, TicTacToeMove } from '@bored-games/shared/src/types';
+import type { TicTacToeState, Player } from '@bored-games/shared';
 
 const WINNING_LINES = [
   [0, 1, 2], [3, 4, 5], [6, 7, 8], // rows
@@ -16,50 +16,48 @@ const WINNING_LINES = [
 
 type Cell = '' | 'X' | 'O';
 
-function cellsFromState(state: TicTacToeState | undefined): Cell[] {
-  if (!state?.board) return Array(9).fill('');
-  return state.board as Cell[];
-}
-
 export function TicTacToeBoard() {
   const { room } = useRoom();
-  const { sendMove } = useGame();
+  const { state, isMyTurn, mySessionId, sendMove } = useGame();
   const { session } = useSession();
 
-  const cells = useMemo(() => cellsFromState(room?.game as TicTacToeState | undefined), [room?.game]);
-  const gameState = room?.game as TicTacToeState | undefined;
-  const isMyTurn = gameState?.currentPlayerId === session?.id;
-  const isGameOver = room?.status === 'game_over';
-  const winnerId = gameState?.winnerId;
-  const winner = room?.players.find((p) => p.sessionId === winnerId);
+  const tttState = state?.gameType === 'tic-tac-toe' ? state as TicTacToeState : undefined;
+  const isGameOver = room?.status === 'completed';
+  const winnerId = tttState?.result?.winner ?? null;
 
-  // Find winning line for highlight
-  const winningLine = useMemo(() => {
-    if (!gameState?.winnerId) return null;
+  // Get current player symbol for hints
+  const currentSymbol = useMemo(() => {
+    if (!tttState || !mySessionId) return 'X';
+    const idx = tttState.players.indexOf(mySessionId);
+    return idx === 0 ? 'X' : 'O';
+  }, [tttState, mySessionId]);
+
+  // Find winning line
+  const winningLine = useMemo((): number[] | null => {
+    if (!tttState?.result?.winner || !tttState.board) return null;
+    if (tttState.winningLine) {
+      return tttState.winningLine.map(([r, c]: [number, number]) => r * 3 + c);
+    }
+    const cells = tttState.board.flat() as Cell[];
     for (const line of WINNING_LINES) {
       const [a, b, c] = line;
       if (cells[a] && cells[a] === cells[b] && cells[a] === cells[c]) {
-        return line;
+        return [a, b, c];
       }
     }
     return null;
-  }, [cells, gameState?.winnerId]);
-
-  // Valid moves are all empty cells
-  const validMoves = useMemo(() => {
-    if (isGameOver) return [];
-    return cells
-      .map((c, i) => (c === '' ? i : null))
-      .filter((i): i is number => i !== null);
-  }, [cells, isGameOver]);
+  }, [tttState]);
 
   const handleCellClick = (index: number) => {
     if (!isMyTurn || isGameOver) return;
+    if (!tttState) return;
+    const cells = tttState.board.flat() as Cell[];
     if (cells[index] !== '') return;
 
-    const move: TicTacToeMove = { cell: index };
-    sendMove(move);
+    sendMove({ type: 'PLACE_MARK', cell: index });
   };
+
+  const cells = useMemo(() => tttState ? tttState.board.flat() as Cell[] : Array(9).fill('') as Cell[], [tttState]);
 
   const getCellClass = (index: number) => {
     const classes = ['cell'];
@@ -72,8 +70,8 @@ export function TicTacToeBoard() {
     return classes.join(' ');
   };
 
-  // Show valid move hints on hover when it's your turn
   const showValidHints = isMyTurn && !isGameOver;
+  const winner = winnerId ? room?.players.find((p: Player) => p.sessionId === winnerId) : null;
 
   return (
     <div className="ttt-board-wrapper">
@@ -87,7 +85,7 @@ export function TicTacToeBoard() {
             aria-label={`Cell ${index + 1}${cell ? `, marked ${cell}` : ', empty'}`}
             title={
               showValidHints && cell === ''
-                ? `Click to place ${gameState?.currentPlayerSymbol}`
+                ? `Click to place ${currentSymbol}`
                 : undefined
             }
           >
@@ -103,7 +101,7 @@ export function TicTacToeBoard() {
               </svg>
             )}
             {showValidHints && cell === '' && (
-              <span className="cell-hint">{gameState?.currentPlayerSymbol}</span>
+              <span className="cell-hint">{currentSymbol}</span>
             )}
           </button>
         ))}
@@ -113,11 +111,9 @@ export function TicTacToeBoard() {
       {isGameOver && (
         <div className="game-result-banner">
           {winner ? (
-            <>
-              <span className="result-winner-name">
-                {winner.sessionId === session?.id ? 'You win! 🎉' : `${winner.displayName} wins!`}
-              </span>
-            </>
+            <span className="result-winner-name">
+              {winner.sessionId === session.id ? 'You win! 🎉' : `${winner.displayName} wins!`}
+            </span>
           ) : (
             <span className="result-winner-name">It's a draw!</span>
           )}

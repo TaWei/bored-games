@@ -114,7 +114,7 @@ export class GameLoop {
     }
   }
 
-  handleMessage(sessionId: string, rawMessage: string | Blob): void {
+  async handleMessage(sessionId: string, rawMessage: string | Blob): Promise<void> {
     const conn = this.connections.get(sessionId);
     if (!conn) return;
 

@@ -6,12 +6,23 @@ import { useEffect } from 'react';
 import { useSessionStore } from '../stores/session';
 
 export function useSession() {
-  const session = useSessionStore();
+  const store = useSessionStore();
 
   // Hydrate on mount
   useEffect(() => {
-    session.hydrate();
+    store.hydrate();
   }, []);
 
-  return session;
+  // Return a session wrapper object for ergonomic access
+  return {
+    session: {
+      id: store.sessionId,
+      name: store.displayName,
+    },
+    sessionId: store.sessionId,
+    displayName: store.displayName,
+    isLoaded: store.isLoaded,
+    setDisplayName: store.setDisplayName,
+    resetSession: store.resetSession,
+  };
 }

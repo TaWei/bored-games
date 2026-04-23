@@ -76,7 +76,8 @@ export type GameState = TicTacToeState | ChessState;
 
 export interface TicTacToeMove {
   type: 'PLACE_MARK';
-  cell: [number, number]; // [row, col], 0-indexed
+  /** Flat cell index 0-8 (row-major): 0=top-left, 8=bottom-right */
+  cell: number;
 }
 
 export interface ChessMove {

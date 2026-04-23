@@ -169,8 +169,8 @@ rooms.post('/queue', zValidator('json', queueSchema), async (c) => {
       return c.json({ error: `Unknown game type: ${gameType}` }, 400);
     }
 
-    await Matchmaking.joinQueue(sessionId, gameType as GameType, displayName);
-    const position = await Matchmaking.getQueuePosition(sessionId, gameType as GameType);
+    await Matchmaking.addToQueue(gameType as GameType, sessionId);
+    const position = await Matchmaking.getQueuePosition(gameType as GameType, sessionId);
 
     return c.json({ queued: true, position, gameType }, 200);
   } catch (err) {
@@ -189,7 +189,7 @@ rooms.delete('/queue', async (c) => {
   }
 
   try {
-    await Matchmaking.leaveQueue(sessionId, gameType as GameType);
+    await Matchmaking.removeFromQueue(gameType as GameType, sessionId);
     return c.json({ queued: false });
   } catch (err) {
     console.error('Leave queue error:', err);

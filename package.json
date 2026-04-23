@@ -7,8 +7,9 @@
     "dev": "bun run --parallel \"bun --bun run server:dev\" \"bun --bun run client:dev\"",
     "dev:server": "bun --bun --watch run server/src/index.ts",
     "dev:client": "cd client && bun run vite",
-    "build": "bun run shared:build && bun run client:build",
+    "build": "bun run shared:build && bun run server:build && bun run client:build",
     "shared:build": "cd packages/shared && bun run build",
+    "server:build": "cd server && bun run build",
     "client:build": "cd client && bun run build",
     "db:migrate": "cd server && bun run db:migrate",
     "db:studio": "cd server && bunx drizzle-kit studio",
@@ -22,5 +23,8 @@
   "engines": {
     "node": ">=18",
     "bun": ">=1.1"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.7.6"
   }
 }

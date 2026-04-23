@@ -4,7 +4,8 @@
 
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { pgTable, uuid, varchar, integer, timestamp, jsonb, pgComposite, index, sql } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, integer, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { DATABASE_URL } from './config';
 
 // Connection (for migrations and queries)
