@@ -11,7 +11,7 @@ export const redis = new Redis(REDIS_URL, {
   enableOfflineQueue: false,
   retryStrategy(times: number) {
     if (times > 3) {
-      console.error('Redis: max retries exceeded, giving up');
+      if (isDevelopment) console.error('Redis: max retries exceeded, giving up');
       return null;
     }
     return Math.min(times * 200, 2000);
@@ -25,12 +25,22 @@ export const redisSub = new Redis(REDIS_URL, {
   enableOfflineQueue: false,
 });
 
-redis.on('connect', () => {
-  if (isDevelopment) console.log('✅ Redis connected');
-});
+let connectionReady = false;
+
+function markReady() {
+  connectionReady = true;
+  if (isDevelopment) {
+    console.log('✅ Redis connected');
+  }
+}
+
+redis.on('connect', markReady);
+redis.on('ready', markReady);
 
 redis.on('error', (err) => {
-  console.error('❌ Redis error:', err.message);
+  if (connectionReady) {
+    console.error('❌ Redis error:', err.message);
+  }
 });
 
 redisSub.on('connect', () => {
@@ -38,14 +48,13 @@ redisSub.on('connect', () => {
 });
 
 redisSub.on('error', (err) => {
-  console.error('❌ Redis subscriber error:', err.message);
+  if (isDevelopment) console.error('❌ Redis subscriber error:', err.message);
 });
 
-// Connect on module load
+// Attempt initial connection — fail gracefully so the server still starts
 (async () => {
   try {
-    await redis.connect();
-    await redisSub.connect();
+    await Promise.all([redis.connect(), redisSub.connect()]);
   } catch (err) {
     console.warn('⚠️  Redis connection failed — some features may be unavailable');
     console.warn('   Run: docker-compose up -d');

@@ -214,7 +214,13 @@ export class GameLoop {
     msg: Extract<ClientMessage, { type: 'CHAT' }>,
     conn: Connection
   ): Promise<void> {
-    const sanitized = msg.payload.message.slice(0, 200).replace(/[<>]/g, '');
+    const sanitized = msg.payload.message
+      .slice(0, 200)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
     await this.broadcast({
       type: 'CHAT',
       payload: {

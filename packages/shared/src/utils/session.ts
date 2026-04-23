@@ -17,17 +17,12 @@ export async function hashSessionId(sessionId: string): Promise<string> {
 }
 
 /**
- * Synchronous hash using Node crypto (server-side only).
- * Falls back to a placeholder in browser environments.
+ * ⚠️ Server-side only — use hashSessionId() in browser.
+ * This sync version exists for environments where async crypto is unavailable.
+ * On the server, use the hashSessionId from @bored-games/shared/services/leaderboard instead.
  */
-export function hashSessionIdSync(sessionId: string): string {
-  // Will be overridden by server-side import
-  // This is a browser-safe stub
-  if (typeof globalThis.crypto !== 'undefined' && 'subtle' in globalThis.crypto) {
-    throw new Error('Use hashSessionId() in browser — this is async');
-  }
-  // Node.js path (imported dynamically in server)
-  return sessionId; // placeholder until Node implementation
+export function hashSessionIdSync(_sessionId: string): never {
+  throw new Error('hashSessionIdSync is not available — use hashSessionId() (async) or the server-side hashSessionId from leaderboard service');
 }
 
 /**

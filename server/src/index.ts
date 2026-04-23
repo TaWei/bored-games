@@ -149,7 +149,7 @@ async function setupKeyspaceNotifications() {
     await sub.subscribe('__keyevent@0__:expired');
 
     sub.on('message', (channel, key) => {
-      if (key.startsWith('room:') && !key.includes(':')) {
+      if (key.startsWith('room:') && key.split(':').length === 2) {
         const code = key.split(':')[1];
         if (code && code.length === 6) {
           console.log(`🧹 Room ${code} expired (TTL reached)`);
@@ -164,7 +164,7 @@ async function setupKeyspaceNotifications() {
   }
 }
 
-setupKeyspaceNotifications().catch(console.error);
+setupKeyspaceNotifications();
 
 // ----- Start server -----
 

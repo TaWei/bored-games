@@ -8,9 +8,10 @@ import type { GameEngine } from './types';
 import type { GameType, GameInfo, GameInfoListResponse } from '../types';
 
 // Registry keyed by game type
+// NOTE: chess engine is a stub — uncomment once fully implemented with chess.js
 export const gameEngines: Record<string, GameEngine> = {
   [ticTacToeEngine.gameType]: ticTacToeEngine,
-  // [chessEngine.gameType]: chessEngine, // uncomment when chess is implemented
+  // [chessEngine.gameType]: chessEngine, // TODO: uncomment when chess is implemented
 };
 
 /**

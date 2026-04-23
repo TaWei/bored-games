@@ -8,9 +8,7 @@ const envSchema = z.object({
   PORT: z.string().default('3000'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   REDIS_URL: z.string().default('redis://localhost:6379'),
-  DATABASE_URL: z.string().default(
-    'postgres://bored_games:bored_games_dev@localhost:5432/bored_games'
-  ),
+  DATABASE_URL: z.string().default('postgresql://localhost:5432/bored_games'),
   /** How long before an idle room is automatically cleaned up (ms) */
   ROOM_TTL_MS: z.string().default('1800000').transform(Number), // 30 min
   /** How long to wait for a disconnected player before forfeiting (ms) */

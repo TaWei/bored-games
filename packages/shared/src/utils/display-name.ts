@@ -10,7 +10,7 @@ const ADJECTIVES = [
   'Cunning', 'Vivid', 'Zesty', 'Cosmic', 'Neon',
   'Arctic', 'Solar', 'Lunar', 'Stellar', 'Frosty',
   'Turbo', 'Hyper', 'Ultra', 'Mega', 'Super',
-  'Epic', 'Rad', 'Epic', 'Wavy', 'Breezy',
+  'Epic', 'Rad', 'Wavy', 'Breezy',
   'Spicy', 'Chill', 'Funky', 'Jazzy', 'Peppy',
   'Snappy', 'Zippy', 'Fluffy', 'Crackle', 'Glowing',
   'Shadow', 'Stormy', 'Crystal', 'Velvet', 'Iron',
