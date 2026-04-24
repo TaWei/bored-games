@@ -29,6 +29,7 @@ import type {
   CodenamesPlayerState,
   WerewolfMove,
   WerewolfPlayerState,
+  WerewolfState,
 } from '@bored-games/shared';
 
 interface Connection {
@@ -239,11 +240,18 @@ export class GameLoop {
     // Update state
     this.state = result.state;
 
-    // Broadcast to ALL connections
-    await this.broadcast({
-      type: 'STATE_UPDATE',
-      payload: { state: this.state, lastMove: msg.payload.move },
-    });
+    // Broadcast state update (spectator-safe for Werewolf)
+    if (this.state?.gameType === 'werewolf') {
+      await this.broadcastWerewolfStateUpdate(
+        msg.payload.move,
+        this.state as WerewolfState
+      );
+    } else {
+      await this.broadcast({
+        type: 'STATE_UPDATE',
+        payload: { state: this.state, lastMove: msg.payload.move },
+      });
+    }
 
     // Persist to Redis
     await saveGameState(this.roomCode, this.state);
@@ -512,6 +520,61 @@ export class GameLoop {
         }
       }
     }
+  }
+
+  private async broadcastToSpectators(msg: ServerMessage): Promise<void> {
+    const data = JSON.stringify(msg);
+    for (const conn of this.connections.values()) {
+      if (conn.isSpectator) {
+        try {
+          conn.ws.send(data);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  /**
+   * Sanitize WerewolfState for spectators by stripping private information.
+   * Removes: seerPeekResults, werewolfKillTarget, and role info from playerStates.
+   */
+  private sanitizeWerewolfStateForSpectator(state: WerewolfState): WerewolfState {
+    return {
+      ...state,
+      seerPeekResults: {},
+      werewolfKillTarget: null,
+      // Strip role info from player states - spectators only see alive/dead status
+      playerStates: state.playerStates.map((ps) => ({
+        sessionId: ps.sessionId,
+        displayName: ps.displayName,
+        isAlive: ps.isAlive,
+        role: undefined,
+      })),
+    };
+  }
+
+  /**
+   * Broadcast state update for Werewolf, sending full state to players
+   * and sanitized state to spectators.
+   */
+  private async broadcastWerewolfStateUpdate(
+    lastMove: Move,
+    state: WerewolfState
+  ): Promise<void> {
+    const fullUpdate: ServerMessage = {
+      type: 'STATE_UPDATE',
+      payload: { state, lastMove },
+    };
+    const sanitizedUpdate: ServerMessage = {
+      type: 'STATE_UPDATE',
+      payload: { state: this.sanitizeWerewolfStateForSpectator(state), lastMove },
+    };
+
+    await Promise.all([
+      this.broadcastToPlayers(fullUpdate),
+      this.broadcastToSpectators(sanitizedUpdate),
+    ]);
   }
 
   private sendTo(sessionId: string, msg: ServerMessage): void {
