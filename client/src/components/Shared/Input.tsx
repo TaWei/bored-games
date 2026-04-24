@@ -20,7 +20,7 @@ export function Input({ label, error, hint, className = '', id, ...rest }: Input
           {label}
         </label>
       )}
-      <input id={inputId} className="input-field" {...rest} />
+      <input id={inputId} className="input" {...rest} />
       {error && <span className="input-error">{error}</span>}
       {hint && !error && <span className="input-hint">{hint}</span>}
     </div>

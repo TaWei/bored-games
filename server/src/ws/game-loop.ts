@@ -434,6 +434,7 @@ export class GameLoop {
         : null;
 
       await recordGameResult({
+        roomCode: this.roomCode,
         gameType: this.state.gameType,
         sessionHashes: hashes,
         winnerHash,

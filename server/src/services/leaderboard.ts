@@ -16,6 +16,7 @@ export function hashSessionId(sessionId: string): string {
 // ----- Record a completed game -----
 
 export interface GameResult {
+  roomCode: string;
   gameType: GameType;
   sessionHashes: string[];   // All players' hashes in join order
   winnerHash: string | null; // null = draw
@@ -54,7 +55,7 @@ export async function recordGameResult(result: GameResult): Promise<void> {
 
     // Also insert into games table for replay/history
     await db.insert(games).values({
-      roomCode: 'unknown', // TODO: pass room code
+      roomCode: result.roomCode,
       gameType: result.gameType,
       sessionHash: hash,
       playerHashes: JSON.stringify(result.sessionHashes),
