@@ -8,6 +8,8 @@ import { useSession } from '../../hooks/useSession';
 import { useRoom } from '../../stores/room';
 import { useGame } from '../../hooks/useGame';
 import { TicTacToeBoard } from './TicTacToeBoard';
+import { AvalonBoard } from './AvalonBoard';
+import { CodenamesBoard } from './CodenamesBoard';
 import { PlayerBadge } from './PlayerBadge';
 import { GameStatus } from './GameStatus';
 import { Button } from '../Shared/Button';
@@ -151,6 +153,8 @@ export function GamePage() {
             {/* Game board */}
             <div className="board-container">
               {state?.gameType === 'tic-tac-toe' && <TicTacToeBoard />}
+              {state?.gameType === 'avalon' && <AvalonBoard />}
+              {state?.gameType === 'codenames' && <CodenamesBoard />}
             </div>
 
             {/* Game actions */}

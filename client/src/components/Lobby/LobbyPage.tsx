@@ -25,6 +25,13 @@ const GAMES = [
     players: '2 players',
     available: false,
   },
+  {
+    name: 'Avalon',
+    icon: '🛡️',
+    description: 'The Resistance — social deduction for 5–10 players',
+    players: '5–10 players',
+    available: true,
+  },
 ];
 
 export function LobbyPage() {

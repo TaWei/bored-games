@@ -4,14 +4,17 @@
 
 import { ticTacToeEngine } from './tic-tac-toe';
 import { chessEngine } from './chess';
+import { avalonEngine } from './avalon';
+import { codenamesEngine } from './codenames';
 import type { GameEngine } from './types';
 import type { GameType, GameInfo, GameInfoListResponse } from '../types';
 
 // Registry keyed by game type
-// NOTE: chess engine is a stub — uncomment once fully implemented with chess.js
 export const gameEngines: Record<string, GameEngine> = {
-  [ticTacToeEngine.gameType]: ticTacToeEngine,
-  // [chessEngine.gameType]: chessEngine, // TODO: uncomment when chess is implemented
+	[ticTacToeEngine.gameType]: ticTacToeEngine,
+	[avalonEngine.gameType]: avalonEngine,
+	[codenamesEngine.gameType]: codenamesEngine,
+	// [chessEngine.gameType]: chessEngine, // TODO: uncomment when chess is implemented
 };
 
 /**
@@ -68,3 +71,5 @@ export function getGameInfo(type: GameType): GameInfo | null {
 
 export { ticTacToeEngine } from './tic-tac-toe';
 export { chessEngine } from './chess';
+export { avalonEngine } from './avalon';
+export { codenamesEngine } from './codenames';

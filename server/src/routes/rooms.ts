@@ -37,7 +37,7 @@ rooms.post('/', zValidator('json', createRoomSchema), async (c) => {
   }
 
   try {
-    const validGameTypes: GameType[] = ['tic-tac-toe', 'chess'];
+    const validGameTypes: GameType[] = ['tic-tac-toe', 'chess', 'avalon', 'codenames'];
     if (!validGameTypes.includes(gameType as GameType)) {
       return c.json({ error: `Unknown game type: ${gameType}` }, 400);
     }
@@ -164,7 +164,7 @@ rooms.post('/queue', zValidator('json', queueSchema), async (c) => {
   }
 
   try {
-    const validGameTypes: GameType[] = ['tic-tac-toe', 'chess'];
+    const validGameTypes: GameType[] = ['tic-tac-toe', 'chess', 'avalon', 'codenames'];
     if (!validGameTypes.includes(gameType as GameType)) {
       return c.json({ error: `Unknown game type: ${gameType}` }, 400);
     }

@@ -5,7 +5,7 @@
 import type { GameType, Move, MoveResult, GameEnd, GameState } from '../types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export interface GameEngine<S extends GameState = any, M extends Move = Move> {
+export interface GameEngine<S extends GameState = any, M extends Move = any> {
   readonly gameType: GameType;
   readonly minPlayers: number;
   readonly maxPlayers: number;
@@ -47,4 +47,10 @@ export interface GameEngine<S extends GameState = any, M extends Move = Move> {
    * Optional: validate a move without applying it
    */
   isValidMove?(state: S, move: M, playerId: string): boolean;
+
+  // ── Avalon-specific extended methods ──
+  // These are defined on the avalonEngine but are NOT part of the base
+  // GameEngine contract — they are internal implementation details called
+  // from within applyMove() via non-null assertions (!) below.
+  // do NOT add these to GameEngine — they would break other game engines.
 }

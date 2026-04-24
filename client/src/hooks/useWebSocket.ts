@@ -88,6 +88,101 @@ export function useWebSocket({ roomCode, mode = 'play', enabled = true }: UseWeb
       setConnected(false);
     });
 
+    // ── Avalon-specific handlers ──
+
+    socket.on('AVALON_ROLE_ASSIGNED', (msg) => {
+      if (msg.type !== 'AVALON_ROLE_ASSIGNED') return;
+      // Private role info — in a real app this would go to a private store
+      // For now we log to console so testers can see role assignments
+      console.info('[Avalon] Your role:', msg.payload.role, '| Evil:', msg.payload.isEvil);
+    });
+
+    socket.on('AVALON_PHASE_CHANGE', (msg) => {
+      if (msg.type !== 'AVALON_PHASE_CHANGE') return;
+      console.info('[Avalon] Phase changed to:', msg.payload.phase);
+    });
+
+    socket.on('AVALON_TEAM_PROPOSED', (msg) => {
+      if (msg.type !== 'AVALON_TEAM_PROPOSED') return;
+      console.info('[Avalon] Team proposed by', msg.payload.leader, ':', msg.payload.team);
+    });
+
+    socket.on('AVALON_TEAM_VOTE', (msg) => {
+      if (msg.type !== 'AVALON_TEAM_VOTE') return;
+      console.info('[Avalon] Vote results:', msg.payload.votesReceived, '/', Object.keys(msg.payload.votes).length);
+    });
+
+    socket.on('AVALON_QUEST_RESULT', (msg) => {
+      if (msg.type !== 'AVALON_QUEST_RESULT') return;
+      console.info('[Avalon] Quest result:', msg.payload.succeeded ? 'PASSED' : 'FAILED', '| Fail cards:', msg.payload.failCards);
+    });
+
+    socket.on('AVALON_MISSION_UPDATE', (msg) => {
+      if (msg.type !== 'AVALON_MISSION_UPDATE') return;
+      console.info('[Avalon] Mission update:', msg.payload.mission, msg.payload.results);
+    });
+
+    socket.on('AVALON_ASSASSINATION_PHASE', (msg) => {
+      if (msg.type !== 'AVALON_ASSASSINATION_PHASE') return;
+      console.info('[Avalon] Assassination phase — candidates:', msg.payload.candidates);
+    });
+
+    socket.on('AVALON_ASSASSINATION_VOTE', (msg) => {
+      if (msg.type !== 'AVALON_ASSASSINATION_VOTE') return;
+      console.info('[Avalon] Assassination vote:', msg.payload.votes);
+    });
+
+    socket.on('AVALON_ROLE_REVEAL', (msg) => {
+      if (msg.type !== 'AVALON_ROLE_REVEAL') return;
+      console.info('[Avalon] Role reveal —', msg.payload.target, 'is', msg.payload.role);
+    });
+
+    socket.on('AVALON_ABILITY_USED', (msg) => {
+      if (msg.type !== 'AVALON_ABILITY_USED') return;
+      console.info('[Avalon] Ability used:', msg.payload.ability, 'by', msg.payload.player, '→', msg.payload.target);
+    });
+
+    socket.on('AVALON_LANCELOT_FLIPPED', (msg) => {
+      if (msg.type !== 'AVALON_LANCELOT_FLIPPED') return;
+      console.info('[Avalon] Lancelot flipped!', msg.payload.player, '→', msg.payload.newAlignment);
+    });
+
+    // ── Codenames-specific handlers ──
+
+    socket.on('CODENAMES_ROLE_ASSIGNED', (msg) => {
+      if (msg.type !== 'CODENAMES_ROLE_ASSIGNED') return;
+      console.info(
+        '[Codenames] Your team:',
+        msg.payload.team,
+        '| Your role:',
+        msg.payload.role
+      );
+    });
+
+    socket.on('CODENAMES_CLUE_GIVEN', (msg) => {
+      if (msg.type !== 'CODENAMES_CLUE_GIVEN') return;
+      console.info(
+        '[Codenames] Clue given:',
+        msg.payload.word,
+        msg.payload.number
+      );
+    });
+
+    socket.on('CODENAMES_CARD_REVEALED', (msg) => {
+      if (msg.type !== 'CODENAMES_CARD_REVEALED') return;
+      console.info('[Codenames] Card revealed.', msg.payload);
+    });
+
+    socket.on('CODENAMES_TURN_ENDED', (msg) => {
+      if (msg.type !== 'CODENAMES_TURN_ENDED') return;
+      console.info('[Codenames] Turn ended.', msg.payload);
+    });
+
+    socket.on('CODENAMES_GAME_END', (msg) => {
+      if (msg.type !== 'CODENAMES_GAME_END') return;
+      console.info('[Codenames] Game over — winner:', msg.payload.winner);
+    });
+
     // Connect
     socket.connect();
 

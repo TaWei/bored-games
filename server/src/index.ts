@@ -135,6 +135,7 @@ const queueInterval = setInterval(async () => {
   try {
     await processQueue('tic-tac-toe');
     await processQueue('chess');
+    await processQueue('avalon');
   } catch (err) {
     console.error('Queue processing error:', err);
   }

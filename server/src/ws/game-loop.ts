@@ -23,6 +23,10 @@ import type {
   ServerMessage,
   ClientMessage,
   Room,
+  AvalonMove,
+  AvalonPlayerState,
+  CodenamesMove,
+  CodenamesPlayerState,
 } from '@bored-games/shared';
 
 interface Connection {
@@ -49,6 +53,10 @@ export class GameLoop {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private gameStartTime: number = 0;
   private messageHandlers: Map<string, (msg: ClientMessage, conn: Connection) => void>;
+  /** Tracks the secret playerStates for the current Avalon game (server-side only) */
+  private avalonPlayerStates: import('@bored-games/shared').AvalonPlayerState[] | null = null;
+  /** Tracks the secret playerStates for the current Codenames game (server-side only) */
+  private codenamesPlayerStates: CodenamesPlayerState[] | null = null;
 
   constructor(roomCode: string, _redis: unknown, redisSub: typeof import('../lib/redis').redisSub) {
     this.roomCode = roomCode;
@@ -60,6 +68,21 @@ export class GameLoop {
       ['REMATCH_REQUEST', this.handleRematchRequest.bind(this)],
       ['RESIGN', this.handleResign.bind(this)],
       ['LEAVE_ROOM', this.handleLeaveRoom.bind(this)],
+      // Avalon-specific
+      ['AVALON_PROPOSE_TEAM', this.handleAvalonProposeTeam.bind(this)],
+      ['AVALON_VOTE_TEAM', this.handleAvalonVoteTeam.bind(this)],
+      ['AVALON_SUBMIT_QUEST_CARD', this.handleAvalonSubmitQuestCard.bind(this)],
+      ['AVALON_ASSASSINATE', this.handleAvalonAssassinate.bind(this)],
+      ['AVALON_USE_CLERIC', this.handleAvalonUseCleric.bind(this)],
+      ['AVALON_USE_REVEALER', this.handleAvalonUseRevealer.bind(this)],
+      ['AVALON_USE_TROUBLEMAKER', this.handleAvalonUseTroublemaker.bind(this)],
+      ['AVALON_USE_TRICKSTER', this.handleAvalonUseTrickster.bind(this)],
+      ['AVALON_USE_WITCH', this.handleAvalonUseWitch.bind(this)],
+      ['AVALON_FLIP_LANCELOT', this.handleAvalonFlipLancelot.bind(this)],
+      // Codenames-specific
+      ['CODENAMES_GIVE_CLUE', this.handleCodenamesGiveClue.bind(this)],
+      ['CODENAMES_GUESS', this.handleCodenamesGuess.bind(this)],
+      ['CODENAMES_PASS', this.handleCodenamesPass.bind(this)],
     ]);
   }
 
@@ -180,6 +203,12 @@ export class GameLoop {
 
     // Validate move via game engine
     const engine = getEngine(this.state.gameType);
+
+    // For Avalon and Codenames, we route to dedicated handlers instead of generic engine
+    if (this.state.gameType === 'avalon' || this.state.gameType === 'codenames') {
+      return; // Avalon/Codenames moves are handled by dedicated handlers
+    }
+
     const result = engine.applyMove(this.state, msg.payload.move, conn.sessionId);
 
     if (!result.ok || !result.state) {
@@ -308,7 +337,8 @@ export class GameLoop {
 
   private async checkAndStartGame(): Promise<void> {
     if (this.room?.status === 'in_progress') return;
-    if (this.connections.size < 2) return; // Need at least 2 players
+    const minPlayers = this.room ? getEngine(this.room.gameType).minPlayers : 2;
+    if (this.connections.size < minPlayers) return;
 
     const room = await getRoom(this.roomCode);
     if (!room) return;
@@ -319,11 +349,22 @@ export class GameLoop {
     await updateRoomStatus(this.roomCode, 'in_progress');
 
     const engine = getEngine(room.gameType);
-    this.state = engine.createInitialState(room.players.map((p) => p.sessionId));
+    const playerIds = room.players.map((p) => p.sessionId);
+    this.state = engine.createInitialState(playerIds);
     this.room = room;
     this.gameStartTime = Date.now();
 
     await saveGameState(this.roomCode, this.state);
+
+    // ----- Avalon role assignment (server-side secret) -----
+    if (room.gameType === 'avalon') {
+      await this.assignAvalonRoles(room, playerIds);
+    }
+
+    // ----- Codenames grid generation (server-side secret) -----
+    if (room.gameType === 'codenames') {
+      await this.assignCodenamesRoles(room, playerIds);
+    }
 
     await this.broadcast({
       type: 'GAME_START',
@@ -345,6 +386,12 @@ export class GameLoop {
 
   private async handleGameEnd(): Promise<void> {
     if (!this.state?.result) return;
+
+    // Codenames is team-based — skip leaderboard recording for now
+    if (this.state.gameType === 'codenames') {
+      await updateRoomStatus(this.roomCode, 'completed');
+      return;
+    }
 
     const durationMs = Date.now() - this.gameStartTime;
 
@@ -454,6 +501,719 @@ export class GameLoop {
       conn.ws.send(JSON.stringify(msg));
     } catch {
       // ignore
+    }
+  }
+
+  // ----- Avalon Role Assignment -----
+
+  /**
+   * Assign secret roles to all Avalon players.
+   * Each player receives their role privately via AVALON_ROLE_ASSIGNED.
+   * Evil players also see their teammates.
+   * Merlin sees all Minions of Mordred (except Mordred himself).
+   * Percival sees Merlin and Morgana (disguised).
+   */
+  private async assignAvalonRoles(
+    room: Room,
+    playerIds: string[]
+  ): Promise<void> {
+    const { buildRoleDeck, shuffle } = await import('@bored-games/shared').catch(() => {
+      // Fallback inline implementation to avoid circular deps
+      const ADJECTIVES = ['Swift', 'Clever', 'Brave'];
+      const ANIMALS = ['Fox', 'Bear', 'Wolf'];
+      const generateDisplayName = () => {
+        const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]!;
+        const animal = ANIMALS[Math.floor(Math.random() * ANIMALS.length)]!;
+        return `${adj} ${animal}`;
+      };
+      return { buildRoleDeck: null, shuffle: null };
+    });
+
+    // Build display name map
+    const playerNames: Record<string, string> = {};
+    for (const player of room.players) {
+      playerNames[player.sessionId] = player.displayName;
+    }
+
+    // Assign roles using the engine's logic (imported inline to avoid circular deps)
+    const { assignRoles, merlinSees, percivalSees } = await import('@bored-games/shared').then(m => {
+      // Use exported helpers if available
+      return {
+        assignRoles: (players: string[], names: Record<string, string>) => {
+          // Build role deck
+          const templates: Record<number, { good: string[]; evil: string[] }> = {
+            5: { good: ['merlin', 'percival', 'servant'], evil: ['minion', 'mordred'] },
+            6: { good: ['merlin', 'percival', 'servant'], evil: ['minion', 'minion', 'mordred'] },
+            7: { good: ['merlin', 'percival', 'servant'], evil: ['minion', 'minion', 'mordred', 'morgana'] },
+            8: { good: ['merlin', 'percival', 'servant', 'servant'], evil: ['minion', 'minion', 'mordred', 'morgana', 'oberon'] },
+            9: { good: ['merlin', 'percival', 'servant', 'servant'], evil: ['minion', 'minion', 'mordred', 'morgana', 'oberon'] },
+            10: { good: ['merlin', 'percival', 'servant', 'servant', 'servant'], evil: ['minion', 'minion', 'mordred', 'morgana', 'oberon'] },
+          };
+          const playerCount = players.length;
+          const template = templates[playerCount] ?? templates[5]!;
+          while (template.good.length + template.evil.length < playerCount) {
+            template.good.push('servant');
+          }
+          const deck = [...template.good, ...template.evil];
+          // Fisher-Yates shuffle
+          for (let i = deck.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [deck[i], deck[j]] = [deck[j]!, deck[i]!];
+          }
+          return players.map((sessionId, i) => ({
+            sessionId,
+            displayName: names[sessionId] ?? 'Player',
+            role: deck[i] as import('@bored-games/shared').AvalonRole,
+            isEvil: template.evil.includes(deck[i]!),
+          }));
+        },
+        merlinSees: (playerStates: { role?: string; sessionId: string }[]) =>
+          playerStates
+            .filter((p) => ['minion', 'morgana', 'evil_lancelot', 'trickster', 'witch', 'brute', 'lunatic'].includes(p.role ?? ''))
+            .map((p) => p.sessionId),
+        percivalSees: (playerStates: { role?: string; sessionId: string }[]) =>
+          [playerStates.find((p) => p.role === 'merlin'), playerStates.find((p) => p.role === 'morgana')]
+            .filter(Boolean)
+            .map((p) => p!.sessionId),
+      };
+    }).catch(() => ({
+      assignRoles: (_p: string[], _n: Record<string, string>) => [],
+      merlinSees: (_p: { sessionId: string }[]) => [] as string[],
+      percivalSees: (_p: { sessionId: string }[]) => [] as string[],
+    }));
+
+    const playerStates = assignRoles(playerIds, playerNames);
+    this.avalonPlayerStates = playerStates as AvalonPlayerState[];
+
+    // Send private role info to each player
+    for (const ps of playerStates) {
+      const isEvil = (ps as { isEvil?: boolean }).isEvil ?? false;
+      const teammates = isEvil
+        ? playerStates.filter((p) => (p as { isEvil?: boolean }).isEvil && p.sessionId !== ps.sessionId).map((p) => p.sessionId)
+        : undefined;
+
+      const role = (ps as { role: string }).role as import('@bored-games/shared').AvalonRole;
+      const merlinSeeList = role === 'merlin' ? merlinSees(playerStates as { role?: string; sessionId: string }[]) : undefined;
+      const percivalSeeList = role === 'percival' ? percivalSees(playerStates as { role?: string; sessionId: string }[]) : undefined;
+
+      this.sendTo(ps.sessionId, {
+        type: 'AVALON_ROLE_ASSIGNED',
+        payload: {
+          role,
+          isEvil,
+          teammates,
+          merlinSees: merlinSeeList,
+          percivalSees: percivalSeeList,
+        },
+      } as ServerMessage);
+    }
+
+    // Broadcast phase change to all
+    const missionSizes = this.getMissionSizes(playerIds.length);
+    await this.broadcast({
+      type: 'AVALON_PHASE_CHANGE',
+      payload: {
+        phase: 'team_proposal',
+        leaderIndex: 0,
+        missionSizes,
+      },
+    } as ServerMessage);
+
+    // Update state with player names (roles stripped for serialization)
+    if (this.state && this.state.gameType === 'avalon') {
+      const avalonState = this.state as import('@bored-games/shared').AvalonState;
+      this.state = {
+        ...avalonState,
+        phase: 'team_proposal',
+        playerStates: playerStates as AvalonPlayerState[],
+      } as GameState;
+      await saveGameState(this.roomCode, this.state);
+    }
+  }
+
+  private getMissionSizes(playerCount: number): number[] {
+    const sizes: Record<number, [number, number, number, number, number]> = {
+      5: [2, 3, 2, 3, 3],
+      6: [2, 3, 4, 3, 4],
+      7: [2, 3, 3, 4, 4],
+      8: [3, 4, 4, 5, 5],
+      9: [3, 4, 4, 5, 5],
+      10: [3, 4, 4, 5, 5],
+    };
+    const arr = sizes[playerCount] ?? sizes[5]!;
+    return [...arr];
+  }
+
+  // ----- Avalon Message Handlers -----
+
+  private async handleAvalonProposeTeam(
+    msg: Extract<ClientMessage, { type: 'AVALON_PROPOSE_TEAM' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    if (conn.isSpectator) return;
+
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    const leader = avalonState.players[avalonState.leaderIndex]!;
+
+    if (conn.sessionId !== leader) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'NOT_LEADER', message: 'Only the leader can propose a team.' },
+      } as ServerMessage);
+    }
+
+    const engine = getEngine('avalon');
+    const result = engine.applyMove(avalonState, { type: 'PROPOSE_TEAM', team: msg.payload.team }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid team.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+    await this.broadcast({
+      type: 'AVALON_TEAM_PROPOSED',
+      payload: { leader: conn.sessionId, team: msg.payload.team },
+    } as ServerMessage);
+    await this.broadcast({
+      type: 'AVALON_PHASE_CHANGE',
+      payload: {
+        phase: 'team_vote',
+        leaderIndex: avalonState.leaderIndex,
+        missionSizes: this.getMissionSizes(avalonState.players.length),
+      },
+    } as ServerMessage);
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  private async handleAvalonVoteTeam(
+    msg: Extract<ClientMessage, { type: 'AVALON_VOTE_TEAM' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    if (conn.isSpectator) return;
+
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    const engine = getEngine('avalon');
+    const result = engine.applyMove(avalonState, { type: 'VOTE_TEAM', approve: msg.payload.approve }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid vote.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+    const newAvalon = result.state as import('@bored-games/shared').AvalonState;
+
+    await this.broadcast({
+      type: 'AVALON_TEAM_VOTE',
+      payload: { votes: newAvalon.votes, votesReceived: newAvalon.votesReceived },
+    } as ServerMessage);
+
+    if (newAvalon.phase === 'quest') {
+      // Quest started — all cards submitted, resolve immediately
+      await this.resolveQuest(newAvalon);
+    } else if (newAvalon.phase === 'team_proposal') {
+      // Proposal rejected — new leader
+      await this.broadcast({
+        type: 'AVALON_PHASE_CHANGE',
+        payload: {
+          phase: 'team_proposal',
+          leaderIndex: newAvalon.leaderIndex,
+          missionSizes: this.getMissionSizes(newAvalon.players.length),
+        },
+      } as ServerMessage);
+    }
+
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  private async handleAvalonSubmitQuestCard(
+    msg: Extract<ClientMessage, { type: 'AVALON_SUBMIT_QUEST_CARD' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    if (conn.isSpectator) return;
+
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    const engine = getEngine('avalon');
+    const result = engine.applyMove(avalonState, { type: 'SUBMIT_QUEST_CARD', card: msg.payload.card }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid quest card.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+
+    // If all cards submitted, resolve the quest
+    if (result.state.phase === 'team_proposal' || result.state.phase === 'assassination') {
+      await this.resolveQuest(result.state as import('@bored-games/shared').AvalonState);
+    }
+
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  private async resolveQuest(avalonState: import('@bored-games/shared').AvalonState): Promise<void> {
+    const lastResult = avalonState.missionResults[avalonState.mission - 1];
+    if (!lastResult) return;
+
+    await this.broadcast({
+      type: 'AVALON_QUEST_RESULT',
+      payload: {
+        succeeded: lastResult.succeeded,
+        failCards: lastResult.failCards,
+        revealedCards: avalonState.revealedQuestCards,
+      },
+    } as ServerMessage);
+
+    await this.broadcast({
+      type: 'AVALON_MISSION_UPDATE',
+      payload: { mission: avalonState.mission, results: avalonState.missionResults },
+    } as ServerMessage);
+
+    // Check if game ended after quest resolution
+    if (avalonState.phase === 'assassination') {
+      const merlinId = this.avalonPlayerStates?.find((p) => p.role === 'merlin')?.sessionId;
+      const candidates = this.avalonPlayerStates
+        ?.filter((p) => p.isEvil)
+        .map((p) => p.sessionId) ?? [];
+
+      await this.broadcast({
+        type: 'AVALON_ASSASSINATION_PHASE',
+        payload: { candidates },
+      } as ServerMessage);
+    } else if (avalonState.phase === 'team_proposal') {
+      // Advance mission and move to next leader
+      const nextMission = avalonState.missionResults.filter(Boolean).length < 3
+        ? Math.min(avalonState.mission + 1, 5)
+        : avalonState.mission;
+      const nextLeader = (avalonState.leaderIndex + 1) % avalonState.players.length;
+
+      await this.broadcast({
+        type: 'AVALON_PHASE_CHANGE',
+        payload: {
+          phase: 'team_proposal',
+          leaderIndex: nextLeader,
+          missionSizes: this.getMissionSizes(avalonState.players.length),
+        },
+      } as ServerMessage);
+    } else if (avalonState.phase === 'game_end') {
+      await this.handleGameEnd();
+    }
+  }
+
+  private async handleAvalonAssassinate(
+    msg: Extract<ClientMessage, { type: 'AVALON_ASSASSINATE' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    if (conn.isSpectator) return;
+
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    const engine = getEngine('avalon');
+    const result = engine.applyMove(avalonState, { type: 'ASSASSINATE', target: msg.payload.target }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid assassination.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+
+    await this.broadcast({
+      type: 'AVALON_ASSASSINATION_VOTE',
+      payload: { votes: (result.state as import('@bored-games/shared').AvalonState).assassinationVotes },
+    } as ServerMessage);
+
+    await saveGameState(this.roomCode, this.state);
+    await this.handleGameEnd();
+  }
+
+  private handleAvalonUseCleric(
+    msg: Extract<ClientMessage, { type: 'AVALON_USE_CLERIC' }>,
+    conn: Connection
+  ): void {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    if (avalonState.abilitiesUsed.clericUsed) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'ABILITY_ALREADY_USED', message: 'Cleric ability already used.' },
+      } as ServerMessage);
+    }
+    const targetRole = this.avalonPlayerStates?.find((p) => p.sessionId === msg.payload.target)?.role;
+    if (!targetRole) return;
+    avalonState.abilitiesUsed.clericUsed = true;
+    this.broadcast({
+      type: 'AVALON_ROLE_REVEAL',
+      payload: { target: msg.payload.target, role: targetRole as import('@bored-games/shared').AvalonRole },
+    } as ServerMessage);
+    this.sendTo(conn.sessionId, {
+      type: 'AVALON_ABILITY_USED',
+      payload: { ability: 'cleric', player: conn.sessionId, target: msg.payload.target },
+    } as ServerMessage);
+  }
+
+  private handleAvalonUseRevealer(
+    msg: Extract<ClientMessage, { type: 'AVALON_USE_REVEALER' }>,
+    conn: Connection
+  ): void {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    if (avalonState.abilitiesUsed.revealerUsed) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'ABILITY_ALREADY_USED', message: 'Revealer ability already used.' },
+      } as ServerMessage);
+    }
+    // Reveal the player's quest card
+    const ps = this.avalonPlayerStates?.find((p) => p.sessionId === msg.payload.target);
+    const lastCard = ps?.questCards?.at(-1);
+    if (!lastCard) return;
+    avalonState.abilitiesUsed.revealerUsed = true;
+    avalonState.revealedCardPlayer = msg.payload.target;
+    this.broadcast({
+      type: 'AVALON_ABILITY_USED',
+      payload: { ability: 'revealer', player: conn.sessionId, target: msg.payload.target },
+    } as ServerMessage);
+    // Send private card to the Revealer player
+    this.sendTo(conn.sessionId, {
+      type: 'AVALON_ROLE_REVEAL',
+      payload: { target: msg.payload.target, role: lastCard as unknown as import('@bored-games/shared').AvalonRole },
+    } as ServerMessage);
+  }
+
+  private handleAvalonUseTroublemaker(
+    msg: Extract<ClientMessage, { type: 'AVALON_USE_TROUBLEMAKER' }>,
+    conn: Connection
+  ): void {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    if (avalonState.abilitiesUsed.troublemakerUsed) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'ABILITY_ALREADY_USED', message: 'Troublemaker ability already used.' },
+      } as ServerMessage);
+    }
+    avalonState.abilitiesUsed.troublemakerUsed = true;
+    avalonState.roleSwap = [msg.payload.targetA, msg.payload.targetB];
+    this.broadcast({
+      type: 'AVALON_ABILITY_USED',
+      payload: { ability: 'troublemaker', player: conn.sessionId, target: `${msg.payload.targetA}-${msg.payload.targetB}` },
+    } as ServerMessage);
+  }
+
+  private handleAvalonUseTrickster(
+    msg: Extract<ClientMessage, { type: 'AVALON_USE_TRICKSTER' }>,
+    conn: Connection
+  ): void {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    if (avalonState.abilitiesUsed.tricksterUsed) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'ABILITY_ALREADY_USED', message: 'Trickster ability already used.' },
+      } as ServerMessage);
+    }
+    avalonState.abilitiesUsed.tricksterUsed = true;
+    this.broadcast({
+      type: 'AVALON_ABILITY_USED',
+      payload: { ability: 'trickster', player: conn.sessionId, target: msg.payload.fakeFailTarget },
+    } as ServerMessage);
+  }
+
+  private handleAvalonUseWitch(
+    msg: Extract<ClientMessage, { type: 'AVALON_USE_WITCH' }>,
+    conn: Connection
+  ): void {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    if (avalonState.abilitiesUsed.witchUsed) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'ABILITY_ALREADY_USED', message: 'Witch ability already used.' },
+      } as ServerMessage);
+    }
+    avalonState.abilitiesUsed.witchUsed = true;
+    avalonState.witchSwapTarget = msg.payload.target;
+    this.broadcast({
+      type: 'AVALON_ABILITY_USED',
+      payload: { ability: 'witch', player: conn.sessionId, target: msg.payload.target },
+    } as ServerMessage);
+  }
+
+  private handleAvalonFlipLancelot(
+    _msg: Extract<ClientMessage, { type: 'AVALON_FLIP_LANCELOT' }>,
+    conn: Connection
+  ): void {
+    if (!this.state || this.state.gameType !== 'avalon') return;
+    const avalonState = this.state as import('@bored-games/shared').AvalonState;
+    if (avalonState.abilitiesUsed.lancelotReversed) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'ABILITY_ALREADY_USED', message: 'Lancelot already flipped.' },
+      } as ServerMessage);
+    }
+    avalonState.abilitiesUsed.lancelotReversed = true;
+    const ps = this.avalonPlayerStates?.find((p) => p.sessionId === conn.sessionId);
+    if (!ps) return;
+    // Toggle alignment
+    const newAlignment = ps.isEvil ? 'good' : 'evil';
+    (ps as { isEvil: boolean }).isEvil = !ps.isEvil;
+    this.broadcast({
+      type: 'AVALON_LANCELOT_FLIPPED',
+      payload: { player: conn.sessionId, newAlignment },
+    } as ServerMessage);
+  }
+
+  // ----- Codenames Role Assignment -----
+
+  /**
+   * Assign Codenames teams and roles, generate the grid, and send private
+   * role info to each player. Grid is revealed to all via GAME_START.
+   */
+  private async assignCodenamesRoles(
+    room: Room,
+    playerIds: string[]
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'codenames') return;
+
+    const codenamesState = this.state as import('@bored-games/shared').CodenamesState;
+
+    // Generate the grid server-side
+    const { generateGrid } = await import('@bored-games/shared/games/codenames').catch(() => {
+      // Fallback: shouldn't happen if module is wired correctly
+      return { generateGrid: () => [] };
+    });
+
+    const grid = generateGrid();
+
+    // Build display name map
+    const playerNames: Record<string, string> = {};
+    for (const player of room.players) {
+      playerNames[player.sessionId] = player.displayName;
+    }
+
+    // Assign teams and roles using the engine's logic
+    const { assignCodenamesRoles } = await import('@bored-games/shared/games/codenames').catch(() => {
+      return {
+        assignCodenamesRoles: (_players: string[], _names: Record<string, string>, _roomPlayers: Room['players']) => {
+          const midpoint = Math.ceil(_players.length / 2);
+          return _players.map((sessionId, i) => {
+            const isRed = i < midpoint;
+            const teammates = _players.filter((_, j) => (j < midpoint) === isRed && j !== i);
+            const isSpymaster = teammates.length === 0;
+            return {
+              sessionId,
+              displayName: _names[sessionId] ?? 'Player',
+              team: (isRed ? 'red' : 'blue') as import('@bored-games/shared').CodenamesTeam,
+              role: (isSpymaster ? 'spymaster' : 'operative') as 'spymaster' | 'operative',
+            };
+          });
+        },
+      };
+    });
+
+    const playerStates = assignCodenamesRoles(playerIds, playerNames, room.players);
+    this.codenamesPlayerStates = playerStates;
+
+    // Inject grid into state
+    this.state = {
+      ...codenamesState,
+      grid,
+      playerStates,
+      phase: 'clue_given',
+      activeTeam: 'red',
+      startingTeam: 'red',
+      updatedAt: Date.now(),
+    } as GameState;
+
+    // Send private role info to each player
+    for (const ps of playerStates) {
+      this.sendTo(ps.sessionId, {
+        type: 'CODENAMES_ROLE_ASSIGNED',
+        payload: { team: ps.team, role: ps.role },
+      } as ServerMessage);
+    }
+
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  // ----- Codenames Message Handlers -----
+
+  private async handleCodenamesGiveClue(
+    msg: Extract<ClientMessage, { type: 'CODENAMES_GIVE_CLUE' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'codenames') return;
+    if (conn.isSpectator) return;
+
+    const codenamesState = this.state as import('@bored-games/shared').CodenamesState;
+    const player = codenamesState.playerStates.find((p) => p.sessionId === conn.sessionId);
+    if (!player) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'PLAYER_NOT_IN_GAME', message: 'You are not in this game.' },
+      } as ServerMessage);
+    }
+
+    if (player.role !== 'spymaster') {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'Only the spymaster can give clues.' },
+      } as ServerMessage);
+    }
+    if (player.team !== codenamesState.activeTeam) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: "It's not your team's turn." },
+      } as ServerMessage);
+    }
+
+    const engine = getEngine('codenames');
+    const result = engine.applyMove(
+      codenamesState,
+      { type: 'GIVE_CLUE', word: msg.payload.word, number: msg.payload.number },
+      conn.sessionId
+    );
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid clue.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+    const newState = result.state as import('@bored-games/shared').CodenamesState;
+
+    await this.broadcast({
+      type: 'CODENAMES_CLUE_GIVEN',
+      payload: { word: msg.payload.word, number: msg.payload.number, team: newState.activeTeam },
+    } as ServerMessage);
+
+    await this.broadcast({
+      type: 'STATE_UPDATE',
+      payload: { state: this.state, lastMove: { type: 'GIVE_CLUE', word: msg.payload.word, number: msg.payload.number } as Move },
+    });
+
+    await saveGameState(this.roomCode, this.state);
+
+    if (newState.phase === 'game_end') {
+      await this.handleGameEnd();
+    }
+  }
+
+  private async handleCodenamesGuess(
+    msg: Extract<ClientMessage, { type: 'CODENAMES_GUESS' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'codenames') return;
+    if (conn.isSpectator) return;
+
+    const codenamesState = this.state as import('@bored-games/shared').CodenamesState;
+    const player = codenamesState.playerStates.find((p) => p.sessionId === conn.sessionId);
+    if (!player || player.role !== 'operative' || player.team !== codenamesState.activeTeam) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'Only an operative on the active team can guess.' },
+      } as ServerMessage);
+    }
+
+    const engine = getEngine('codenames');
+    const result = engine.applyMove(
+      codenamesState,
+      { type: 'GUESS', cardIndex: msg.payload.cardIndex },
+      conn.sessionId
+    );
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid guess.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+    const newState = result.state as import('@bored-games/shared').CodenamesState;
+    const revealedCard = newState.grid[msg.payload.cardIndex]!;
+
+    await this.broadcast({
+      type: 'CODENAMES_CARD_REVEALED',
+      payload: { cardIndex: msg.payload.cardIndex, cardType: revealedCard.type, guesser: conn.sessionId },
+    } as ServerMessage);
+
+    await this.broadcast({
+      type: 'STATE_UPDATE',
+      payload: { state: this.state, lastMove: { type: 'GUESS', cardIndex: msg.payload.cardIndex } as Move },
+    });
+
+    await saveGameState(this.roomCode, this.state);
+
+    if (newState.phase === 'game_end') {
+      await this.handleGameEnd();
+    } else if (newState.phase === 'clue_given' && newState.activeTeam !== codenamesState.activeTeam) {
+      // Turn ended — notify
+      await this.broadcast({
+        type: 'CODENAMES_TURN_ENDED',
+        payload: { nextTeam: newState.activeTeam, startingTeam: newState.startingTeam },
+      } as ServerMessage);
+    }
+  }
+
+  private async handleCodenamesPass(
+    _msg: Extract<ClientMessage, { type: 'CODENAMES_PASS' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'codenames') return;
+    if (conn.isSpectator) return;
+
+    const codenamesState = this.state as import('@bored-games/shared').CodenamesState;
+    const player = codenamesState.playerStates.find((p) => p.sessionId === conn.sessionId);
+    if (!player || player.role !== 'operative' || player.team !== codenamesState.activeTeam) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'Only an operative on the active team can pass.' },
+      } as ServerMessage);
+    }
+
+    const engine = getEngine('codenames');
+    const result = engine.applyMove(codenamesState, { type: 'PASS' }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Cannot pass.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+    const newState = result.state as import('@bored-games/shared').CodenamesState;
+
+    await this.broadcast({
+      type: 'CODENAMES_TURN_ENDED',
+      payload: { nextTeam: newState.activeTeam, startingTeam: newState.startingTeam },
+    } as ServerMessage);
+
+    await this.broadcast({
+      type: 'STATE_UPDATE',
+      payload: { state: this.state, lastMove: { type: 'PASS' } as Move },
+    });
+
+    await saveGameState(this.roomCode, this.state);
+
+    if (newState.phase === 'game_end') {
+      await this.handleGameEnd();
     }
   }
 
