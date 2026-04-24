@@ -1361,7 +1361,7 @@ export class GameLoop {
     const newWW = result.state as import('@bored-games/shared').WerewolfState;
     const livingPlayers = newWW.playerStates.filter((p) => !p.isDead);
     const allNightActionsDone = livingPlayers.every(
-      (p) => p.role === 'werewolf' || newWW.nightActionsReceived.includes(p.sessionId)
+      (p) => (p.role !== 'werewolf' && p.role !== 'seer') || newWW.nightActionsReceived.includes(p.sessionId)
     );
 
     if (allNightActionsDone) {
