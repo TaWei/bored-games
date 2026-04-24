@@ -141,6 +141,11 @@ export class GameLoop {
   removeConnection(sessionId: string): void {
     this.connections.delete(sessionId);
 
+    // If player disconnects mid-game, clean up Redis so they don't block new players
+    if (this.room?.status === 'in_progress') {
+      leaveRoom(this.roomCode, sessionId).catch(console.error);
+    }
+
     // If all connections gone, clean up
     if (this.connections.size === 0) {
       this.cleanup();
