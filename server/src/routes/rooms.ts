@@ -8,7 +8,7 @@ import { z } from 'zod';
 import * as RoomManager from '../services/room-manager';
 import * as Matchmaking from '../services/matchmaking';
 import type { Room, GameType } from '@bored-games/shared';
-import { isValidRoomCode } from '@bored-games/shared';
+import { isValidRoomCode, isGameAvailable } from '@bored-games/shared';
 
 const rooms = new Hono();
 
@@ -37,8 +37,7 @@ rooms.post('/', zValidator('json', createRoomSchema), async (c) => {
   }
 
   try {
-    const validGameTypes: GameType[] = ['tic-tac-toe', 'chess', 'avalon', 'codenames'];
-    if (!validGameTypes.includes(gameType as GameType)) {
+    if (!isGameAvailable(gameType as GameType)) {
       return c.json({ error: `Unknown game type: ${gameType}` }, 400);
     }
 
@@ -164,8 +163,7 @@ rooms.post('/queue', zValidator('json', queueSchema), async (c) => {
   }
 
   try {
-    const validGameTypes: GameType[] = ['tic-tac-toe', 'chess', 'avalon', 'codenames'];
-    if (!validGameTypes.includes(gameType as GameType)) {
+    if (!isGameAvailable(gameType as GameType)) {
       return c.json({ error: `Unknown game type: ${gameType}` }, 400);
     }
 

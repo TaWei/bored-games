@@ -4,7 +4,7 @@
   "private": true,
   "workspaces": ["packages/shared", "server", "client"],
   "scripts": {
-    "dev": "bun run --parallel \"bun --bun run dev:server\" \"bun --bun run dev:client\"",
+    "dev": "bun run --parallel \"bun --bun run server:dev\" \"bun --bun run client:dev\"",
     "dev:server": "bun --bun --watch run server/src/index.ts",
     "dev:client": "cd client && bun run vite",
     "build": "bun run shared:build && bun run server:build && bun run client:build",

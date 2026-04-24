@@ -6,7 +6,6 @@ import { ticTacToeEngine } from './tic-tac-toe';
 import { chessEngine } from './chess';
 import { avalonEngine } from './avalon';
 import { codenamesEngine } from './codenames';
-import { werewolfEngine } from './ultimate-werewolf';
 import type { GameEngine } from './types';
 import type { GameType, GameInfo, GameInfoListResponse } from '../types';
 
@@ -15,7 +14,6 @@ export const gameEngines: Record<string, GameEngine> = {
 	[ticTacToeEngine.gameType]: ticTacToeEngine,
 	[avalonEngine.gameType]: avalonEngine,
 	[codenamesEngine.gameType]: codenamesEngine,
-	[werewolfEngine.gameType]: werewolfEngine,
 	// [chessEngine.gameType]: chessEngine, // TODO: uncomment when chess is implemented
 };
 
@@ -75,4 +73,3 @@ export { ticTacToeEngine } from './tic-tac-toe';
 export { chessEngine } from './chess';
 export { avalonEngine } from './avalon';
 export { codenamesEngine } from './codenames';
-export { werewolfEngine } from './ultimate-werewolf';
