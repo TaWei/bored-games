@@ -400,14 +400,20 @@ export class GameLoop {
       payload: { state: this.state },
     });
 
-    await this.broadcastToPlayers({
-      type: 'ROOM_JOINED',
-      payload: {
-        room,
-        symbol: 'X', // TODO: pass actual symbol per player
-        mySessionId: room.players[0]!.sessionId,
-      },
-    });
+    // Send individual ROOM_JOINED messages to each player with their own symbol
+    for (const conn of this.connections.values()) {
+      if (!conn.isSpectator) {
+        const playerSymbol = room.players.find((p) => p.sessionId === conn.sessionId)?.symbol ?? 'X';
+        await this.sendTo(conn.sessionId, {
+          type: 'ROOM_JOINED',
+          payload: {
+            room,
+            symbol: playerSymbol,
+            mySessionId: conn.sessionId,
+          },
+        });
+      }
+    }
 
     // Start heartbeat monitoring
     this.startHeartbeat();
