@@ -27,9 +27,6 @@ import type {
   AvalonPlayerState,
   CodenamesMove,
   CodenamesPlayerState,
-  WerewolfMove,
-  WerewolfPlayerState,
-  WerewolfState,
 } from '@bored-games/shared';
 
 interface Connection {

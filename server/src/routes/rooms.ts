@@ -2,7 +2,7 @@
 // ROOM ROUTES — Hono handlers for room REST API
 // ============================================================
 
-import { Hono } from 'hono';
+import { Hono, type ContentfulStatusCode } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import * as RoomManager from '../services/room-manager';
@@ -93,7 +93,7 @@ rooms.post(
       return c.json({ room, symbol }, 200);
     } catch (err) {
       if (err instanceof RoomManager.RoomError) {
-        return c.json({ error: err.message, code: err.code }, err.status);
+        return c.json({ error: err.message, code: err.code }, err.status as ContentfulStatusCode);
       }
       console.error('Join room error:', err);
       return c.json({ error: 'Failed to join room' }, 500);
@@ -112,7 +112,7 @@ rooms.post('/:code/join-as-spectator', async (c) => {
     return c.json({ room }, 200);
   } catch (err) {
     if (err instanceof RoomManager.RoomError) {
-      return c.json({ error: err.message, code: err.code }, err.status);
+      return c.json({ error: err.message, code: err.code }, err.status as ContentfulStatusCode);
     }
     console.error('Spectate error:', err);
     return c.json({ error: 'Failed to spectate' }, 500);

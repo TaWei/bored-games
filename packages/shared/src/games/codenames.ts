@@ -540,7 +540,7 @@ export const codenamesEngine: GameEngine<
 		if (!state.winner) return null;
 		return {
 			winner: state.winner,
-			reason: (state.gameEndReason as GameEnd['reason']) ?? 'timeout',
+			reason: (state.gameEndReason as GameEnd['reason']) ?? 'TIME_OUT',
 		};
 	},
 
