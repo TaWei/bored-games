@@ -5,6 +5,7 @@
 import { redis, KEYS, CHANNELS } from '../lib/redis';
 import { config } from '../lib/config';
 import { createRoom, joinRoom, getRoom } from './room-manager';
+import { getEngine } from '@bored-games/shared/games';
 import type { GameType, Room } from '@bored-games/shared';
 
 // Queue TTL: 5 minutes (player will be auto-removed)
@@ -60,7 +61,7 @@ export async function getQueuePosition(
  */
 export async function processQueue(gameType: GameType): Promise<void> {
   const key = KEYS.queue(gameType);
-  const engine = { minPlayers: 2, maxPlayers: 2 } as const; // TODO: pull from engine
+  const engine = getEngine(gameType);
 
   // Get the first N players from the queue
   const players = await redis.zrange(key, 0, engine.minPlayers - 1);
