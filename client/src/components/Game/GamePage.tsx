@@ -10,6 +10,7 @@ import { useGame } from '../../hooks/useGame';
 import { TicTacToeBoard } from './TicTacToeBoard';
 import { AvalonBoard } from './AvalonBoard';
 import { CodenamesBoard } from './CodenamesBoard';
+import { WerewolfBoard } from './WerewolfBoard';
 import { PlayerBadge } from './PlayerBadge';
 import { GameStatus } from './GameStatus';
 import { Button } from '../Shared/Button';
@@ -155,6 +156,7 @@ export function GamePage() {
               {state?.gameType === 'tic-tac-toe' && <TicTacToeBoard />}
               {state?.gameType === 'avalon' && <AvalonBoard />}
               {state?.gameType === 'codenames' && <CodenamesBoard />}
+              {state?.gameType === 'werewolf' && <WerewolfBoard />}
             </div>
 
             {/* Game actions */}

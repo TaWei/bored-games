@@ -27,6 +27,8 @@ import type {
   AvalonPlayerState,
   CodenamesMove,
   CodenamesPlayerState,
+  WerewolfMove,
+  WerewolfPlayerState,
 } from '@bored-games/shared';
 
 interface Connection {
@@ -57,6 +59,8 @@ export class GameLoop {
   private avalonPlayerStates: import('@bored-games/shared').AvalonPlayerState[] | null = null;
   /** Tracks the secret playerStates for the current Codenames game (server-side only) */
   private codenamesPlayerStates: CodenamesPlayerState[] | null = null;
+  /** Tracks the secret playerStates for the current Werewolf game (server-side only) */
+  private werewolfPlayerStates: WerewolfPlayerState[] | null = null;
 
   constructor(roomCode: string, _redis: unknown, redisSub: typeof import('../lib/redis').redisSub) {
     this.roomCode = roomCode;
@@ -83,6 +87,12 @@ export class GameLoop {
       ['CODENAMES_GIVE_CLUE', this.handleCodenamesGiveClue.bind(this)],
       ['CODENAMES_GUESS', this.handleCodenamesGuess.bind(this)],
       ['CODENAMES_PASS', this.handleCodenamesPass.bind(this)],
+      // Werewolf-specific
+      ['WEREWOLF_KILL', this.handleWerewolfKill.bind(this)],
+      ['WEREWOLF_PEEK', this.handleWerewolfPeek.bind(this)],
+      ['WEREWOLF_HUNTER_SHOOT', this.handleWerewolfHunterShoot.bind(this)],
+      ['WEREWOLF_VOTE', this.handleWerewolfVote.bind(this)],
+      ['WEREWOLF_PASS', this.handleWerewolfPass.bind(this)],
     ]);
   }
 
@@ -204,9 +214,9 @@ export class GameLoop {
     // Validate move via game engine
     const engine = getEngine(this.state.gameType);
 
-    // For Avalon and Codenames, we route to dedicated handlers instead of generic engine
-    if (this.state.gameType === 'avalon' || this.state.gameType === 'codenames') {
-      return; // Avalon/Codenames moves are handled by dedicated handlers
+    // For Avalon, Codenames, and Werewolf, we route to dedicated handlers instead of generic engine
+    if (this.state.gameType === 'avalon' || this.state.gameType === 'codenames' || this.state.gameType === 'werewolf') {
+      return; // Avalon/Codenames/Werewolf moves are handled by dedicated handlers
     }
 
     const result = engine.applyMove(this.state, msg.payload.move, conn.sessionId);
@@ -364,6 +374,11 @@ export class GameLoop {
     // ----- Codenames grid generation (server-side secret) -----
     if (room.gameType === 'codenames') {
       await this.assignCodenamesRoles(room, playerIds);
+    }
+
+    // ----- Werewolf role assignment (server-side secret) -----
+    if (room.gameType === 'werewolf') {
+      await this.assignWerewolfRoles(room, playerIds);
     }
 
     await this.broadcast({
@@ -1032,7 +1047,7 @@ export class GameLoop {
       ...codenamesState,
       grid,
       playerStates,
-      phase: 'clue_given',
+      phase: 'clue',
       activeTeam: 'red',
       startingTeam: 'red',
       updatedAt: Date.now(),
@@ -1215,6 +1230,633 @@ export class GameLoop {
     if (newState.phase === 'game_end') {
       await this.handleGameEnd();
     }
+  }
+
+  // ----- Werewolf Role Assignment -----
+
+  /**
+   * Assign secret roles to all Werewolf players.
+   * Each player receives their role privately via WEREWOLF_ROLE_ASSIGNED.
+   * Werewolves also see their teammates.
+   */
+  private async assignWerewolfRoles(
+    room: Room,
+    playerIds: string[]
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'werewolf') return;
+
+    const werewolfState = this.state as import('@bored-games/shared').WerewolfState;
+
+    // Build display name map
+    const playerNames: Record<string, string> = {};
+    for (const player of room.players) {
+      playerNames[player.sessionId] = player.displayName;
+    }
+
+    // Assign roles using the engine's exported helper
+    const { assignWerewolfRoles } = await import('@bored-games/shared/games/ultimate-werewolf').catch(() => {
+      return {
+        assignWerewolfRoles: (_players: string[], _names: Record<string, string>) => {
+          // Minimal fallback — unlikely to be needed since the engine is imported above
+          return _players.map((sessionId) => ({
+            sessionId,
+            displayName: _names[sessionId] ?? 'Player',
+            role: 'villager' as import('@bored-games/shared').WerewolfRole,
+            isDead: false,
+            hasVoted: false,
+          }));
+        },
+      };
+    });
+
+    const playerStates = assignWerewolfRoles(playerIds, playerNames);
+    this.werewolfPlayerStates = playerStates;
+
+    // Inject playerStates into state
+    this.state = {
+      ...werewolfState,
+      playerStates,
+      phase: 'night',
+      nightNumber: 1,
+      phaseStartedAt: Date.now(),
+      updatedAt: Date.now(),
+    } as GameState;
+
+    // Send private role info to each player
+    for (const ps of playerStates) {
+      const teammates = ps.role === 'werewolf'
+        ? playerStates.filter((p) => p.role === 'werewolf' && p.sessionId !== ps.sessionId).map((p) => p.sessionId)
+        : undefined;
+
+      this.sendTo(ps.sessionId, {
+        type: 'WEREWOLF_ROLE_ASSIGNED',
+        payload: {
+          role: ps.role!,
+          teammates,
+        },
+      } as ServerMessage);
+    }
+
+    // Broadcast initial night phase
+    await this.broadcast({
+      type: 'WEREWOLF_PHASE_CHANGE',
+      payload: {
+        phase: 'night',
+        nightNumber: 1,
+        phaseStartedAt: Date.now(),
+      },
+    } as ServerMessage);
+
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  // ----- Werewolf Message Handlers -----
+
+  private async handleWerewolfKill(
+    msg: Extract<ClientMessage, { type: 'WEREWOLF_KILL' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'werewolf') return;
+    if (conn.isSpectator) return;
+
+    const werewolfState = this.state as import('@bored-games/shared').WerewolfState;
+    const player = werewolfState.playerStates.find((p) => p.sessionId === conn.sessionId);
+    if (!player || player.role !== 'werewolf') {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'Only Werewolves can make a kill.' },
+      } as ServerMessage);
+    }
+    if (player.isDead) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'You are dead.' },
+      } as ServerMessage);
+    }
+
+    const engine = getEngine('werewolf');
+    const result = engine.applyMove(werewolfState, { type: 'WEREWOLF_KILL', target: msg.payload.target }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid kill.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+
+    // Notify that the werewolf acted (private confirmation only)
+    this.sendTo(conn.sessionId, {
+      type: 'WEREWOLF_NIGHT_ACTION',
+      payload: { playerId: conn.sessionId, action: 'kill' },
+    } as ServerMessage);
+
+    // Check if all night actions are in — resolve night
+    const newWW = result.state as import('@bored-games/shared').WerewolfState;
+    const livingPlayers = newWW.playerStates.filter((p) => !p.isDead);
+    const allNightActionsDone = livingPlayers.every(
+      (p) => p.role === 'werewolf' || newWW.nightActionsReceived.includes(p.sessionId)
+    );
+
+    if (allNightActionsDone) {
+      await this.resolveWerewolfNight(newWW);
+    }
+
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  private async handleWerewolfPeek(
+    msg: Extract<ClientMessage, { type: 'WEREWOLF_PEEK' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'werewolf') return;
+    if (conn.isSpectator) return;
+
+    const werewolfState = this.state as import('@bored-games/shared').WerewolfState;
+    const player = werewolfState.playerStates.find((p) => p.sessionId === conn.sessionId);
+    if (!player || player.role !== 'seer') {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'Only the Seer can peek.' },
+      } as ServerMessage);
+    }
+    if (player.isDead) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'You are dead.' },
+      } as ServerMessage);
+    }
+
+    const engine = getEngine('werewolf');
+    const result = engine.applyMove(werewolfState, { type: 'SEER_PEEK', target: msg.payload.target }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid peek.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+    const newWW = result.state as import('@bored-games/shared').WerewolfState;
+
+    // Send private peek result only to the seer
+    const peekedRole = newWW.seerPeekResults[msg.payload.target];
+    this.sendTo(conn.sessionId, {
+      type: 'WEREWOLF_SEER_RESULT',
+      payload: { target: msg.payload.target, role: peekedRole! },
+    } as ServerMessage);
+
+    this.sendTo(conn.sessionId, {
+      type: 'WEREWOLF_NIGHT_ACTION',
+      payload: { playerId: conn.sessionId, action: 'peek' },
+    } as ServerMessage);
+
+    // Check if all night actions are done
+    const livingPlayers = newWW.playerStates.filter((p) => !p.isDead);
+    const allNightActionsDone = livingPlayers.every(
+      (p) => (p.role !== 'werewolf' && p.role !== 'seer') || newWW.nightActionsReceived.includes(p.sessionId)
+    );
+
+    if (allNightActionsDone) {
+      await this.resolveWerewolfNight(newWW);
+    }
+
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  private async handleWerewolfHunterShoot(
+    msg: Extract<ClientMessage, { type: 'WEREWOLF_HUNTER_SHOOT' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'werewolf') return;
+    if (conn.isSpectator) return;
+
+    const werewolfState = this.state as import('@bored-games/shared').WerewolfState;
+    const player = werewolfState.playerStates.find((p) => p.sessionId === conn.sessionId);
+    if (!player || player.role !== 'hunter') {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'Only the Hunter can shoot.' },
+      } as ServerMessage);
+    }
+    if (!player.isDead) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'You must be dead to use this ability.' },
+      } as ServerMessage);
+    }
+
+    const engine = getEngine('werewolf');
+    const result = engine.applyMove(werewolfState, { type: 'HUNTER_SHOOT', target: msg.payload.target }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid shoot.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+    const newWW = result.state as import('@bored-games/shared').WerewolfState;
+
+    // Apply the hunter's kill immediately
+    const hunterTarget = newWW.hunterKillTarget;
+    if (hunterTarget) {
+      const updatedPlayerStates = newWW.playerStates.map((p) =>
+        p.sessionId === hunterTarget ? { ...p, isDead: true } : p
+      );
+      const finalPlayerStates = updatedPlayerStates;
+      const finalDeadPlayers = [...newWW.deadPlayers, hunterTarget];
+      const finalAlivePlayers = finalPlayerStates.filter((p) => !p.isDead).map((p) => p.sessionId);
+
+      this.state = {
+        ...newWW,
+        playerStates: finalPlayerStates,
+        deadPlayers: finalDeadPlayers,
+        alivePlayers: finalAlivePlayers,
+        updatedAt: Date.now(),
+      } as GameState;
+
+      await this.broadcast({
+        type: 'WEREWOLF_DEATH',
+        payload: { sessionId: hunterTarget, byHunter: true },
+      } as ServerMessage);
+    }
+
+    await this.broadcast({
+      type: 'WEREWOLF_NIGHT_ACTION',
+      payload: { playerId: conn.sessionId, action: 'shoot' },
+    } as ServerMessage);
+
+    await saveGameState(this.roomCode, this.state);
+
+    // Check win after hunter shoot
+    const winResult = this.checkWerewolfWin(this.werewolfPlayerStates ?? []);
+    if (winResult) {
+      this.state = {
+        ...this.state,
+        phase: 'game_end',
+        winner: winResult.winner,
+        gameEndReason: winResult.reason,
+        updatedAt: Date.now(),
+      } as GameState;
+      await this.broadcast({
+        type: 'WEREWOLF_GAME_END',
+        payload: { winner: winResult.winner, reason: winResult.reason },
+      } as ServerMessage);
+      await this.handleGameEnd();
+    }
+  }
+
+  private async handleWerewolfVote(
+    msg: Extract<ClientMessage, { type: 'WEREWOLF_VOTE' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'werewolf') return;
+    if (conn.isSpectator) return;
+
+    const werewolfState = this.state as import('@bored-games/shared').WerewolfState;
+    const player = werewolfState.playerStates.find((p) => p.sessionId === conn.sessionId);
+    if (!player || player.isDead) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'You are dead.' },
+      } as ServerMessage);
+    }
+    if (player.hasVoted) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'ALREADY_VOTED', message: 'You have already voted.' },
+      } as ServerMessage);
+    }
+
+    const engine = getEngine('werewolf');
+    const result = engine.applyMove(werewolfState, { type: 'VOTE', target: msg.payload.target }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid vote.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+    const newWW = result.state as import('@bored-games/shared').WerewolfState;
+
+    // Broadcast vote update to all
+    await this.broadcast({
+      type: 'WEREWOLF_VOTE_UPDATE',
+      payload: { votes: newWW.votes, votesReceived: newWW.votesReceived },
+    } as ServerMessage);
+
+    // Check if voting is complete
+    const livingPlayers = newWW.playerStates.filter((p) => !p.isDead);
+    if (newWW.votesReceived.length >= livingPlayers.length) {
+      await this.resolveWerewolfVote(newWW);
+    }
+
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  private async handleWerewolfPass(
+    _msg: Extract<ClientMessage, { type: 'WEREWOLF_PASS' }>,
+    conn: Connection
+  ): Promise<void> {
+    if (!this.state || this.state.gameType !== 'werewolf') return;
+    if (conn.isSpectator) return;
+
+    const werewolfState = this.state as import('@bored-games/shared').WerewolfState;
+    const player = werewolfState.playerStates.find((p) => p.sessionId === conn.sessionId);
+    if (!player || player.isDead) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: 'INVALID_MOVE', message: 'You are dead.' },
+      } as ServerMessage);
+    }
+
+    const engine = getEngine('werewolf');
+    const result = engine.applyMove(werewolfState, { type: 'PASS' }, conn.sessionId);
+
+    if (!result.ok || !result.state) {
+      return this.sendTo(conn.sessionId, {
+        type: 'ERROR',
+        payload: { code: result.error?.code ?? 'INVALID_MOVE', message: result.error?.message ?? 'Invalid pass.' },
+      } as ServerMessage);
+    }
+
+    this.state = result.state;
+
+    this.sendTo(conn.sessionId, {
+      type: 'WEREWOLF_NIGHT_ACTION',
+      payload: { playerId: conn.sessionId, action: 'pass' },
+    } as ServerMessage);
+
+    const newWW = result.state as import('@bored-games/shared').WerewolfState;
+    const livingPlayers = newWW.playerStates.filter((p) => !p.isDead);
+    const allNightActionsDone = livingPlayers.every(
+      (p) => (p.role !== 'werewolf' && p.role !== 'seer') || newWW.nightActionsReceived.includes(p.sessionId)
+    );
+
+    if (allNightActionsDone) {
+      await this.resolveWerewolfNight(newWW);
+    }
+
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  // ----- Werewolf Phase Resolution -----
+
+  /**
+   * Check the Werewolf win condition given current player states.
+   * Mirrors the engine's internal checkWin logic.
+   */
+  private checkWerewolfWin(playerStates: WerewolfPlayerState[]): { winner: 'villagers' | 'werewolves'; reason: string } | null {
+    let villagers = 0;
+    let werewolves = 0;
+    for (const p of playerStates) {
+      if (p.isDead) continue;
+      if (p.role === 'werewolf') werewolves++;
+      else villagers++;
+    }
+    if (werewolves === 0) {
+      return { winner: 'villagers', reason: 'All Werewolves have been eliminated.' };
+    }
+    if (werewolves >= villagers) {
+      return { winner: 'werewolves', reason: 'Werewolves outnumber the Villagers.' };
+    }
+    return null;
+  }
+
+  /**
+   * Resolve the night phase: apply werewolf kill, check for hunter death,
+   * then transition to day/voting or game_end.
+   */
+  private async resolveWerewolfNight(werewolfState: import('@bored-games/shared').WerewolfState): Promise<void> {
+    const killTarget = werewolfState.werewolfKillTarget;
+    let finalPlayerStates = werewolfState.playerStates;
+    let finalDeadPlayers = werewolfState.deadPlayers;
+    let finalAlivePlayers = werewolfState.alivePlayers;
+
+    if (killTarget) {
+      finalPlayerStates = finalPlayerStates.map((p) =>
+        p.sessionId === killTarget ? { ...p, isDead: true } : p
+      );
+      finalDeadPlayers = [...finalDeadPlayers, killTarget];
+      finalAlivePlayers = finalPlayerStates.filter((p) => !p.isDead).map((p) => p.sessionId);
+
+      await this.broadcast({
+        type: 'WEREWOLF_DEATH',
+        payload: { sessionId: killTarget, byHunter: false },
+      } as ServerMessage);
+
+      await this.broadcast({
+        type: 'WEREWOLF_KILL_RESULT',
+        payload: { target: killTarget, died: true, byHunter: false },
+      } as ServerMessage);
+    }
+
+    // Check win condition
+    const winResult = this.checkWerewolfWin(finalPlayerStates);
+    if (winResult) {
+      const endState: WerewolfState = {
+        ...werewolfState,
+        playerStates: finalPlayerStates,
+        deadPlayers: finalDeadPlayers,
+        alivePlayers: finalAlivePlayers,
+        phase: 'game_end',
+        winner: winResult.winner,
+        gameEndReason: winResult.reason,
+        updatedAt: Date.now(),
+      };
+      this.state = endState;
+      await this.broadcast({
+        type: 'WEREWOLF_GAME_END',
+        payload: { winner: winResult.winner, reason: winResult.reason },
+      } as ServerMessage);
+      await this.broadcast({
+        type: 'WEREWOLF_PHASE_CHANGE',
+        payload: { phase: 'game_end', phaseStartedAt: Date.now() },
+      } as ServerMessage);
+      await saveGameState(this.roomCode, this.state);
+      await this.handleGameEnd();
+      return;
+    }
+
+    // Check if eliminated player is hunter → they get to shoot
+    const killedPlayer = finalPlayerStates.find((p) => p.sessionId === killTarget);
+    if (killedPlayer?.role === 'hunter') {
+      const hunterState: WerewolfState = {
+        ...werewolfState,
+        playerStates: finalPlayerStates,
+        deadPlayers: finalDeadPlayers,
+        alivePlayers: finalAlivePlayers,
+        phase: 'voting', // stay in voting until hunter shoots
+        votes: {},
+        votesReceived: [],
+        nightActionsReceived: [],
+        werewolfKillTarget: null,
+        seerPeekResults: {},
+        phaseStartedAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      this.state = hunterState;
+      await this.broadcast({
+        type: 'WEREWOLF_PHASE_CHANGE',
+        payload: { phase: 'voting', phaseStartedAt: Date.now() },
+      } as ServerMessage);
+      await saveGameState(this.roomCode, this.state);
+      return;
+    }
+
+    // Transition to day discussion
+    const dayState: WerewolfState = {
+      ...werewolfState,
+      playerStates: finalPlayerStates,
+      deadPlayers: finalDeadPlayers,
+      alivePlayers: finalAlivePlayers,
+      phase: 'day',
+      votes: {},
+      votesReceived: [],
+      nightActionsReceived: [],
+      werewolfKillTarget: null,
+      seerPeekResults: {},
+      dayStarted: true,
+      phaseStartedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    this.state = dayState;
+    await this.broadcast({
+      type: 'WEREWOLF_PHASE_CHANGE',
+      payload: { phase: 'day', nightNumber: werewolfState.nightNumber, phaseStartedAt: Date.now() },
+    } as ServerMessage);
+    await saveGameState(this.roomCode, this.state);
+  }
+
+  /**
+   * Resolve the voting phase: tally votes, eliminate player,
+   * then transition to night or game_end.
+   */
+  private async resolveWerewolfVote(werewolfState: import('@bored-games/shared').WerewolfState): Promise<void> {
+    const voteTally: Record<string, number> = {};
+    for (const targetId of Object.values(werewolfState.votes)) {
+      voteTally[targetId] = (voteTally[targetId] ?? 0) + 1;
+    }
+
+    const livingPlayers = werewolfState.playerStates.filter((p) => !p.isDead);
+    const maxVotes = Math.max(...Object.values(voteTally));
+    const topVoted = Object.keys(voteTally).filter((k) => voteTally[k] === maxVotes);
+
+    if (topVoted.length > 1) {
+      // Tie — revote
+      const tieState: WerewolfState = {
+        ...werewolfState,
+        phase: 'voting',
+        votes: {},
+        votesReceived: [],
+        consecutiveTies: werewolfState.consecutiveTies + 1,
+        phaseStartedAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      this.state = tieState;
+      await this.broadcast({
+        type: 'WEREWOLF_VOTE_RESULT',
+        payload: { eliminated: null, tied: true },
+      } as ServerMessage);
+      await saveGameState(this.roomCode, this.state);
+      return;
+    }
+
+    const eliminated = topVoted[0]!;
+    const eliminatedPlayer = werewolfState.playerStates.find((p) => p.sessionId === eliminated);
+    const eliminatedRole = eliminatedPlayer?.role;
+
+    const finalPlayerStates = werewolfState.playerStates.map((p) =>
+      p.sessionId === eliminated ? { ...p, isDead: true } : p
+    );
+    const finalDeadPlayers = [...werewolfState.deadPlayers, eliminated];
+    const finalAlivePlayers = finalPlayerStates.filter((p) => !p.isDead).map((p) => p.sessionId);
+
+    await this.broadcast({
+      type: 'WEREWOLF_DEATH',
+      payload: { sessionId: eliminated, byHunter: false },
+    } as ServerMessage);
+
+    await this.broadcast({
+      type: 'WEREWOLF_VOTE_RESULT',
+      payload: { eliminated, tied: false },
+    } as ServerMessage);
+
+    // Check win condition
+    const winResult = this.checkWerewolfWin(finalPlayerStates);
+    if (winResult) {
+      const endState: WerewolfState = {
+        ...werewolfState,
+        playerStates: finalPlayerStates,
+        deadPlayers: finalDeadPlayers,
+        alivePlayers: finalAlivePlayers,
+        phase: 'game_end',
+        winner: winResult.winner,
+        gameEndReason: winResult.reason,
+        phaseStartedAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      this.state = endState;
+      await this.broadcast({
+        type: 'WEREWOLF_GAME_END',
+        payload: { winner: winResult.winner, reason: winResult.reason },
+      } as ServerMessage);
+      await saveGameState(this.roomCode, this.state);
+      await this.handleGameEnd();
+      return;
+    }
+
+    // If eliminated is hunter → they get a shoot action before next night
+    if (eliminatedRole === 'hunter') {
+      const hunterState: WerewolfState = {
+        ...werewolfState,
+        playerStates: finalPlayerStates,
+        deadPlayers: finalDeadPlayers,
+        alivePlayers: finalAlivePlayers,
+        phase: 'voting', // stay in voting until hunter shoots
+        consecutiveTies: 0,
+        phaseStartedAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      this.state = hunterState;
+      await this.broadcast({
+        type: 'WEREWOLF_PHASE_CHANGE',
+        payload: { phase: 'voting', phaseStartedAt: Date.now() },
+      } as ServerMessage);
+      await saveGameState(this.roomCode, this.state);
+      return;
+    }
+
+    // Transition to next night
+    const nextNightState: WerewolfState = {
+      ...werewolfState,
+      playerStates: finalPlayerStates,
+      deadPlayers: finalDeadPlayers,
+      alivePlayers: finalAlivePlayers,
+      phase: 'night',
+      votes: {},
+      votesReceived: [],
+      nightActionsReceived: [],
+      werewolfKillTarget: null,
+      seerPeekResults: {},
+      hunterKillTarget: null,
+      consecutiveTies: 0,
+      nightNumber: (werewolfState.nightNumber ?? 0) + 1,
+      phaseStartedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    this.state = nextNightState;
+    await this.broadcast({
+      type: 'WEREWOLF_PHASE_CHANGE',
+      payload: { phase: 'night', nightNumber: nextNightState.nightNumber, phaseStartedAt: Date.now() },
+    } as ServerMessage);
+    await saveGameState(this.roomCode, this.state);
   }
 
   // ----- Heartbeat -----
