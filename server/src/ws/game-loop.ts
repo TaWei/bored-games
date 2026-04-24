@@ -1521,6 +1521,7 @@ export class GameLoop {
   ): Promise<void> {
     if (!this.state || this.state.gameType !== 'werewolf') return;
     if (conn.isSpectator) return;
+    if (this.state.result) return;
 
     const werewolfState = this.state as import('@bored-games/shared').WerewolfState;
     const player = werewolfState.playerStates.find((p) => p.sessionId === conn.sessionId);
