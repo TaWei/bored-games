@@ -55,6 +55,7 @@ export function isValidDisplayName(name: string): boolean {
 export function sanitizeDisplayName(name: string): string {
   return name
     .trim()
+    .replace(/[^A-Za-z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .slice(0, 24);
 }
