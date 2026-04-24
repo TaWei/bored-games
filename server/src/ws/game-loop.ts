@@ -376,6 +376,7 @@ export class GameLoop {
     this.state = engine.createInitialState(playerIds);
     this.room = room;
     this.gameStartTime = Date.now();
+    this.room.rematchRequests = [];
 
     await saveGameState(this.roomCode, this.state);
 
@@ -443,6 +444,11 @@ export class GameLoop {
       });
     } catch (err) {
       console.error('Failed to record game result:', err);
+    }
+
+    // Clear rematch requests to prevent accumulation across games
+    if (this.room) {
+      this.room.rematchRequests = [];
     }
 
     await updateRoomStatus(this.roomCode, 'completed');
