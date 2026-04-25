@@ -44,11 +44,11 @@ export async function createRoom(
   const engine = getEngine(gameType);
 
   // Generate unique code (retry on collision, rare)
-  let code: string;
-  for (let attempt = 0; attempt < 10; attempt++) {
-    code = generateRoomCode();
+  let code: string = generateRoomCode();
+  for (let attempt = 1; attempt < 10; attempt++) {
     const exists = await redis.exists(KEYS.room(code));
     if (!exists) break;
+    code = generateRoomCode();
   }
 
   const name = sanitizeDisplayName(displayName ?? generateDisplayName());

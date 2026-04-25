@@ -2,7 +2,8 @@
 // ROOM ROUTES — Hono handlers for room REST API
 // ============================================================
 
-import { Hono, type ContentfulStatusCode } from 'hono';
+import { Hono } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import * as RoomManager from '../services/room-manager';

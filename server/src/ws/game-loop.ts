@@ -1255,7 +1255,7 @@ export class GameLoop {
 
     if (newState.phase === 'game_end') {
       await this.handleGameEnd();
-    } else if (newState.phase === 'clue_given' && newState.activeTeam !== codenamesState.activeTeam) {
+    } else if (newState.phase === 'clue' && newState.activeTeam !== codenamesState.activeTeam) {
       // Turn ended — notify
       await this.broadcast({
         type: 'CODENAMES_TURN_ENDED',

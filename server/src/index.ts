@@ -115,15 +115,13 @@ const server = serve({
     },
 
     close(ws, code, reason) {
-      const { sessionId, roomCode } = ws.data as WsContext;
-      if (isDevelopment) {
-        console.log(`🔌 WS close — session=${sessionId.slice(0, 8)}… room=${roomCode} code=${code}`);
+      const data = ws.data as WsContext | undefined;
+      if (data) {
+        const { sessionId, roomCode } = data;
+        if (isDevelopment) {
+          console.log(`🔌 WS close — session=${sessionId.slice(0, 8)}… room=${roomCode} code=${code}`);
+        }
       }
-    },
-
-    error(ws, err) {
-      const { sessionId, roomCode } = ws.data as WsContext;
-      console.error(`WS error room=${roomCode} session=${sessionId.slice(0, 8)}…:`, err.message);
     },
   },
 });
