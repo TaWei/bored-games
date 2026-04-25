@@ -13,7 +13,7 @@ Stack: **Bun** + **Hono** + **React** + **Redis** + **PostgreSQL**
 bun install
 
 # 2. Start infrastructure (Redis + PostgreSQL)
-docker-compose up -d
+docker compose up -d
 
 # 3. Run database migrations
 bun run db:migrate
@@ -120,7 +120,7 @@ cp .env.example .env
 | `bun run dev:client` | Client only |
 | `bun run build` | Build all packages |
 | `bun run db:migrate` | Run database migrations |
-| `docker-compose up -d` | Start Redis + Postgres |
+| `docker compose up -d` | Start Redis + Postgres |
 | `bun run db:studio` | Open Drizzle Studio |
 
 ## License

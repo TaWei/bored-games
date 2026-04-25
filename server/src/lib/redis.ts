@@ -57,7 +57,7 @@ redisSub.on('error', (err) => {
     await Promise.all([redis.connect(), redisSub.connect()]);
   } catch (err) {
     console.warn('⚠️  Redis connection failed — some features may be unavailable');
-    console.warn('   Run: docker-compose up -d');
+    console.warn('   Run: docker compose up -d');
   }
 })();
 

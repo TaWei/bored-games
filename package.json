@@ -13,8 +13,8 @@
     "client:build": "cd client && bun run build",
     "db:migrate": "cd server && bun run db:migrate",
     "db:studio": "cd server && bunx drizzle-kit studio",
-    "docker:up": "docker-compose up -d",
-    "docker:down": "docker-compose down",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
     "clean": "rm -rf packages/shared/dist server/dist client/dist"
   },
   "devDependencies": {
