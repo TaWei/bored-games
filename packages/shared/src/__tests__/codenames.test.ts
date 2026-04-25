@@ -235,10 +235,8 @@ describe('codenamesEngine.applyMove — GUESS', () => {
     expect(result.state!.activeTeam).toBe('blue');
   });
 
-  // NOTE: due to a bug in applyGuessing_, after finding a friendly agent,
-  // the game ends because countRemaining uses the OLD grid (before card is revealed).
-  // This test documents the BUGGY behavior.
-  test('BUG: finding friendly agent ends game instead of continuing (countRemaining bug)', () => {
+  test('finding friendly agent continues game when more agents remain', () => {
+    // Grid has 9 red cards total; revealing 1 leaves 8, game continues
     const state = makeState({
       phase: 'guessing',
       activeTeam: 'red',
@@ -246,18 +244,50 @@ describe('codenamesEngine.applyMove — GUESS', () => {
       guessesRemaining: 3,
       grid: [
         { word: 'CAT', type: 'red', revealed: false },
-        { word: 'DOG', type: 'bystander', revealed: false },
+        { word: 'DOG', type: 'red', revealed: false },
+        { word: 'BIRD', type: 'red', revealed: false },
+        { word: 'FISH', type: 'red', revealed: false },
+        { word: 'BEAR', type: 'red', revealed: false },
+        { word: 'WOLF', type: 'red', revealed: false },
+        { word: 'DEER', type: 'red', revealed: false },
+        { word: 'MOOSE', type: 'red', revealed: false },
+        { word: 'SEAL', type: 'red', revealed: false },
+        { word: 'BLUE1', type: 'blue', revealed: false },
+        { word: 'BLUE2', type: 'blue', revealed: false },
+        ...Array.from({ length: 14 }, (_, i) => ({ word: 'WORD' + i, type: 'bystander' as const, revealed: false })),
+      ],
+    });
+    const result = codenamesEngine.applyMove(state, { type: 'GUESS', cardIndex: 0 }, OP_RED);
+    expect(result.ok).toBe(true);
+    // Game continues - 8 red cards remain
+    expect(result.state!.phase).toBe('guessing');
+    expect(result.state!.grid[0]!.revealed).toBe(true);
+    expect(result.state!.guessesRemaining).toBe(2);
+  });
+
+  test('finding friendly agent when it is the last ends game with that team winning', () => {
+    // Grid has 1 red card remaining; revealing it ends the game
+    const state = makeState({
+      phase: 'guessing',
+      activeTeam: 'red',
+      currentClue: { word: 'ANIMAL', number: 2 },
+      guessesRemaining: 3,
+      grid: [
+        { word: 'CAT', type: 'red', revealed: false },
+        { word: 'DOG', type: 'red', revealed: true },
         ...Array.from({ length: 23 }, (_, i) => ({ word: 'WORD' + i, type: 'bystander' as const, revealed: false })),
       ],
     });
     const result = codenamesEngine.applyMove(state, { type: 'GUESS', cardIndex: 0 }, OP_RED);
     expect(result.ok).toBe(true);
-    // Bug: countRemaining(newGrid) uses old grid, sees 9 red cards remaining, wrongly ends game
     expect(result.state!.phase).toBe('game_end');
+    expect(result.state!.winner).toBe('red');
+    expect(result.state!.gameEndReason).toContain('found all their agents');
   });
 
-  // NOTE: same bug — guesses exhausted after finding friendly agent wrongly ends game
-  test('BUG: guesses exhausted after finding friendly agent wrongly ends game', () => {
+  test('guesses exhausted after finding friendly agent ends turn (not game)', () => {
+    // After finding a friendly agent, if guesses run out, turn ends (not game)
+    // Only 1 guess remaining, grid has 9 red cards
     const state = makeState({
       phase: 'guessing',
       activeTeam: 'red',
@@ -265,17 +295,26 @@ describe('codenamesEngine.applyMove — GUESS', () => {
       guessesRemaining: 1,
       grid: [
         { word: 'CAT', type: 'red', revealed: false },
-        ...Array.from({ length: 24 }, (_, i) => ({ word: 'WORD' + i, type: 'bystander' as const, revealed: false })),
+        { word: 'DOG', type: 'red', revealed: false },
+        { word: 'BIRD', type: 'red', revealed: false },
+        { word: 'FISH', type: 'red', revealed: false },
+        { word: 'BEAR', type: 'red', revealed: false },
+        { word: 'WOLF', type: 'red', revealed: false },
+        { word: 'DEER', type: 'red', revealed: false },
+        { word: 'MOOSE', type: 'red', revealed: false },
+        { word: 'SEAL', type: 'red', revealed: false },
+        ...Array.from({ length: 16 }, (_, i) => ({ word: 'WORD' + i, type: 'bystander' as const, revealed: false })),
       ],
     });
     const result = codenamesEngine.applyMove(state, { type: 'GUESS', cardIndex: 0 }, OP_RED);
     expect(result.ok).toBe(true);
-    // Bug: should go to clue phase (turn ends) but game_end is set due to countRemaining using old grid
-    expect(result.state!.phase).toBe('game_end');
+    // Turn ends, clue phase, other team goes
+    expect(result.state!.phase).toBe('clue');
+    expect(result.state!.activeTeam).toBe('blue');
+    // But game continues - 8 red agents remain
   });
 
   test('finding last red agent card ends game with red as winner', () => {
-    // When all 9th red card is revealed, countRemaining sees 0 even on the buggy old grid path
     const grid = [
       { word: 'CAT', type: 'red', revealed: false },
       { word: 'DOG', type: 'red', revealed: true },
