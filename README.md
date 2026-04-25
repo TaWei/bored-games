@@ -32,19 +32,59 @@ Browser (React) ←→ Bun HTTP/WS (Hono) ←→ Redis (state + pub/sub)
 - **Server-authoritative**: all game logic runs server-side, clients render only
 - **Anonymous**: sessionId = crypto.randomUUID(), stored in localStorage
 - **Real-time**: WebSocket connections with Redis Pub/Sub fan-out
+- **Plugin-style game engines**: each game implements a `GameEngine` interface in `packages/shared/src/games/`
 
 ## Project Structure
 
 ```
-packages/shared/   — Shared TypeScript types, game engines, utilities
-server/            — Bun HTTP/WS server, Hono API, Redis services
-client/            — React + Vite frontend, Zustand stores
+packages/shared/   — Shared TypeScript types, game engines (tic-tac-toe, chess,
+                      avalon, codenames, werewolf), game registry, utilities
+server/            — Bun HTTP/WS server, Hono REST API, WebSocket game loop,
+                      Redis services (rooms, matchmaking, leaderboard)
+client/            — React + Vite frontend, Zustand stores, WebSocket hooks
 ```
 
 ## Supported Games
 
-- 🎯 Tic-Tac-Toe (MVP)
-- ♟️ Chess (planned)
+| Game | Players | Status |
+|------|---------|--------|
+| 🎯 Tic-Tac-Toe | 2 | ✅ Playable |
+| ♟️ Chess | 2 | ✅ Playable |
+| 🔮 Avalon (The Resistance) | 5–10 | ✅ Playable |
+| 🕵️ Codenames | 4–8 | ✅ Playable |
+| 🌙 Werewolf | 4–10 | ✅ Playable |
+
+**Game Engine Pattern** — Each game in `packages/shared/src/games/` exports a `GameEngine` interface:
+
+```typescript
+interface GameEngine<S extends GameState, M extends Move> {
+  gameType: GameType;
+  minPlayers: number;
+  maxPlayers: number;
+  name: string;
+  description: string;
+  slug: string;
+  icon: string;
+  createInitialState(players: string[]): S;
+  applyMove(state: S, move: M, playerId: string): MoveResult<S>;
+  checkGameEnd(state: S): GameEnd | null;
+  serialize(state: S): string;
+  deserialize(data: string): S;
+}
+```
+
+Games with secret roles (Avalon, Codenames, Werewolf) keep role assignments server-side only. The game-loop.ts in the server handles per-game phase transitions and broadcasts sanitized state to clients.
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/games` | List all available games |
+| GET | `/api/games/:type` | Get metadata for a specific game |
+| POST | `/api/rooms` | Create a new room |
+| GET | `/api/rooms/:code` | Get room info |
+| POST | `/api/rooms/:code/join` | Join a room |
+| WS | `/ws?roomCode=:code&sessionId=:id` | WebSocket for game events |
 
 ## Environment Variables
 
@@ -57,13 +97,14 @@ cp .env.example .env
 ## Scripts
 
 | Command | Description |
-|---|---|
+|---------|-------------|
 | `bun run dev` | Start all dev servers |
 | `bun run dev:server` | Server only |
 | `bun run dev:client` | Client only |
 | `bun run build` | Build all packages |
 | `bun run db:migrate` | Run database migrations |
 | `docker-compose up -d` | Start Redis + Postgres |
+| `bun run db:studio` | Open Drizzle Studio |
 
 ## License
 
