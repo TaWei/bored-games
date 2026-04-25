@@ -16,7 +16,7 @@ export const gameEngines: Record<string, GameEngine> = {
 	[avalonEngine.gameType]: avalonEngine,
 	[codenamesEngine.gameType]: codenamesEngine,
 	[werewolfEngine.gameType]: werewolfEngine,
-	// [chessEngine.gameType]: chessEngine, // TODO: uncomment when chess is implemented
+	[chessEngine.gameType]: chessEngine,
 };
 
 /**

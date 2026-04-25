@@ -57,8 +57,8 @@ export const useSessionStore = create<SessionState>()(
       },
     }),
     {
-      name: 'bored-games-session',
-      // Only persist displayName — sessionId is managed separately
+      name: 'bored-games-session-meta',
+      // Only persist displayName — sessionId is managed separately via getOrCreateSessionId()
       partialize: (state) => ({ displayName: state.displayName }),
       onRehydrateStorage: () => (state) => {
         if (state) {

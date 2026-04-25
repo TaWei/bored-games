@@ -25,9 +25,8 @@ describe('gameEngines registry', () => {
     expect(gameEngines['werewolf']).toBeDefined();
   });
 
-  test('does NOT contain chess (not yet implemented)', () => {
-    // Per games/index.ts: chess is commented out with TODO
-    expect(gameEngines['chess']).toBeUndefined();
+  test('contains chess', () => {
+    expect(gameEngines['chess']).toBeDefined();
   });
 });
 
@@ -37,19 +36,25 @@ describe('getEngine', () => {
     expect(engine.gameType).toBe('tic-tac-toe');
   });
 
+  test('returns chess engine for chess', () => {
+    const engine = getEngine('chess');
+    expect(engine.gameType).toBe('chess');
+  });
+
   test('throws for unknown game type', () => {
-    expect(() => getEngine('chess' as GameType)).toThrow();
     expect(() => getEngine('monopoly' as GameType)).toThrow();
+    expect(() => getEngine('connect-four' as GameType)).toThrow();
   });
 
   test('throws with helpful error message listing available games', () => {
     try {
-      getEngine('chess' as GameType);
+      getEngine('connect-four' as GameType);
     } catch (e: any) {
       expect(e.message).toContain('tic-tac-toe');
       expect(e.message).toContain('avalon');
       expect(e.message).toContain('codenames');
       expect(e.message).toContain('werewolf');
+      expect(e.message).toContain('chess');
     }
   });
 });
@@ -71,12 +76,13 @@ describe('isGameAvailable', () => {
     expect(isGameAvailable('werewolf')).toBe(true);
   });
 
-  test('returns false for chess (not implemented)', () => {
-    expect(isGameAvailable('chess')).toBe(false);
+  test('returns true for chess', () => {
+    expect(isGameAvailable('chess')).toBe(true);
   });
 
   test('returns false for unknown game types', () => {
     expect(isGameAvailable('monopoly' as GameType)).toBe(false);
+    expect(isGameAvailable('connect-four' as GameType)).toBe(false);
   });
 });
 
@@ -88,12 +94,7 @@ describe('getGameInfoList', () => {
     expect(types).toContain('avalon');
     expect(types).toContain('codenames');
     expect(types).toContain('werewolf');
-  });
-
-  test('does not include chess', () => {
-    const { games } = getGameInfoList();
-    const types = games.map(g => g.gameType);
-    expect(types).not.toContain('chess');
+    expect(types).toContain('chess');
   });
 
   test('each game has required metadata fields', () => {
@@ -131,11 +132,15 @@ describe('getGameInfo', () => {
     expect(game!.slug).toBe('codenames');
   });
 
-  test('returns null for chess (not implemented)', () => {
-    expect(getGameInfo('chess')).toBeNull();
+  test('returns game info for chess', () => {
+    const game = getGameInfo('chess');
+    expect(game).toBeTruthy();
+    expect(game!.name).toBe('Chess');
+    expect(game!.slug).toBe('chess');
   });
 
   test('returns null for unknown game type', () => {
     expect(getGameInfo('monopoly' as GameType)).toBeNull();
+    expect(getGameInfo('connect-four' as GameType)).toBeNull();
   });
 });

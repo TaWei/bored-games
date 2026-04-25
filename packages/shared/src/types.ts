@@ -377,6 +377,7 @@ export interface ChessMove {
   type: 'MOVE_PIECE';
   from: string; // e.g., 'e2'
   to: string;   // e.g., 'e4'
+  promotion?: 'n' | 'b' | 'r' | 'q'; // pawn promotion piece type
 }
 
 export type Move = TicTacToeMove | ChessMove | AvalonMove | CodenamesMove | WerewolfMove;
@@ -398,7 +399,8 @@ export interface MoveError {
     | 'ABILITY_ALREADY_USED'
     | 'NOT_EVIL_PLAYER'
     | 'NOT_ASSASSIN_PHASE'
-    | 'INVALID_TARGET';
+    | 'INVALID_TARGET'
+    | 'INVALID_FEN';
   message: string;
 }
 
@@ -420,7 +422,8 @@ export type GameEndReason =
 	| 'BOARD_FULL'          // Tic-Tac-Toe draw
 	| 'MERLIN_ASSASSINATED' // Avalon: Evil guessed Merlin
 	| 'THREE_MISSIONS_WON'  // Avalon: Good completed 3 missions
-	| 'THREE_MISSIONS_FAILED'; // Avalon: Evil failed 3 missions
+	| 'THREE_MISSIONS_FAILED'  // Avalon: Evil failed 3 missions
+	| 'FIFTY_MOVE_RULE';      // Chess: 50 moves without capture or pawn move
 
 export interface GameEnd {
   winner: string | null; // null = draw

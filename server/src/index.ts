@@ -8,7 +8,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { serveStatic } from 'hono/bun';
 import { routes } from './routes';
-import { handleWebSocket, getOrCreateGameLoop, WsContext } from './ws/handler';
+import { handleWebSocket, handleWSMessage, handleWSClose, getOrCreateGameLoop, WsContext } from './ws/handler';
 import { config, PORT, isDevelopment } from './lib/config';
 import { redis, redisSub } from './lib/redis';
 import { processQueue } from './services/matchmaking';
@@ -87,7 +87,7 @@ const server = serve({
         return new Response('WebSocket upgrade failed', { status: 500 });
       }
 
-      return; // handled by 'websocket' event below
+      return new Response(null, { status: 200 }); // upgrade succeeded, let WS event handle it
     }
 
     // Regular HTTP — let Hono handle it
@@ -109,19 +109,12 @@ const server = serve({
     },
 
     message(ws, msg) {
-      // Messages are handled inside handleWebSocket via ws.on('message')
-      // Bun routes them to the same ws instance's 'message' event
-      // which is already registered in handleWebSocket
+      // Route message to the game loop via handleWSMessage
+      handleWSMessage(ws as any, msg as string | Buffer);
     },
 
     close(ws, code, reason) {
-      const data = ws.data as WsContext | undefined;
-      if (data) {
-        const { sessionId, roomCode } = data;
-        if (isDevelopment) {
-          console.log(`🔌 WS close — session=${sessionId.slice(0, 8)}… room=${roomCode} code=${code}`);
-        }
-      }
+      handleWSClose(ws as any);
     },
   },
 });
@@ -134,6 +127,8 @@ const queueInterval = setInterval(async () => {
     await processQueue('tic-tac-toe');
     await processQueue('chess');
     await processQueue('avalon');
+    await processQueue('codenames');
+    await processQueue('werewolf');
   } catch (err) {
     console.error('Queue processing error:', err);
   }
