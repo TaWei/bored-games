@@ -12,15 +12,32 @@ Stack: **Bun** + **Hono** + **React** + **Redis** + **PostgreSQL**
 # 1. Clone and install
 bun install
 
-# 2. Start infrastructure
+# 2. Start infrastructure (Redis + PostgreSQL)
 docker-compose up -d
 
-# 3. Start dev servers (runs server + client concurrently)
+# 3. Run database migrations
+bun run db:migrate
+
+# 4. Start dev servers (server + client concurrently)
 bun run dev
 
-# Client: http://localhost:5173
-# API:    http://localhost:3000
+# Client:    http://localhost:5173
+# API:       http://localhost:3000
+# Health:    http://localhost:3000/health
 ```
+
+In development, the Vite dev server proxies `/api` and `/ws` requests to the Bun server at port 3000 — no CORS issues, same origin. The server redirects `/` to the Vite client during dev.
+
+## Dev Server Proxy
+
+Vite (`client/vite.config.ts`) runs at **port 5173** and proxies two paths to the Bun server at **port 3000**:
+
+```
+Browser → Vite (5173) ─┬─ /api/*  → Bun server (3000) → REST API
+                       └─ /ws/*   → Bun server (3000) → WebSocket
+```
+
+This means the client makes API calls to `/api/rooms`, `/api/games`, etc. just as it would in production, but Vite forwards them to the server automatically. In production, the built React app is served directly by the Bun server at `/` and API/WebSocket requests go directly to port 3000.
 
 ## Architecture
 
