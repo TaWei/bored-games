@@ -338,64 +338,65 @@ export const avalonEngine = {
 			updatedAt: Date.now(),
 		};
 
-		// If not all players have voted yet, stay in team_vote
-		if (newVotesReceived.length < state.players.length) {
-			return { ok: true, state: newState };
-		}
-
-		// All votes in — tally results
+		// Check majority after each vote (not just at the end)
 		const approvals = Object.keys(newVotes).filter(k => newVotes[k as keyof typeof newVotes]).length;
 		const rejections = Object.keys(newVotes).filter(k => !newVotes[k as keyof typeof newVotes]).length;
 		const majority = Math.floor(state.players.length / 2) + 1;
 		const approved = approvals >= majority;
 
-		if (!approved) {
-			const newConsecutiveRejects = state.consecutiveRejects + 1;
-			const newLeaderIndex = nextLeaderIndex(state.players, state.leaderIndex);
+		// If majority reached on this vote, determine outcome immediately
+		if (approvals >= majority || rejections >= majority) {
+			if (!approved) {
+				const newConsecutiveRejects = state.consecutiveRejects + 1;
+				const newLeaderIndex = nextLeaderIndex(state.players, state.leaderIndex);
 
-			// 5 consecutive rejects → leader picks unilaterally
-			if (newConsecutiveRejects >= 5) {
-				const unilateralTeam = state.players.slice(0, missionTeamSize(state.mission, state.players.length));
+				// 5 consecutive rejects → leader picks unilaterally
+				if (newConsecutiveRejects >= 5) {
+					const unilateralTeam = state.players.slice(0, missionTeamSize(state.mission, state.players.length));
+					return {
+						ok: true,
+						state: {
+							...newState,
+							phase: 'quest',
+							proposedTeam: unilateralTeam,
+							questCardsSubmitted: [],
+							revealedQuestCards: [],
+							consecutiveRejects: 0,
+							leaderIndex: newLeaderIndex,
+							updatedAt: Date.now(),
+						},
+					};
+				}
+
 				return {
 					ok: true,
 					state: {
 						...newState,
-						phase: 'quest',
-						proposedTeam: unilateralTeam,
-						questCardsSubmitted: [],
-						revealedQuestCards: [],
-						consecutiveRejects: 0,
+						phase: 'team_proposal',
 						leaderIndex: newLeaderIndex,
+						proposedTeam: [],
+						consecutiveRejects: newConsecutiveRejects,
 						updatedAt: Date.now(),
 					},
 				};
 			}
 
+			// Team approved — move to quest phase
 			return {
 				ok: true,
 				state: {
 					...newState,
-					phase: 'team_proposal',
-					leaderIndex: newLeaderIndex,
-					proposedTeam: [],
-					consecutiveRejects: newConsecutiveRejects,
+					phase: 'quest',
+					questCardsSubmitted: [],
+					revealedQuestCards: [],
+					consecutiveRejects: 0,
 					updatedAt: Date.now(),
 				},
 			};
 		}
 
-		// Team approved — move to quest phase
-		return {
-			ok: true,
-			state: {
-				...newState,
-				phase: 'quest',
-				questCardsSubmitted: [],
-				revealedQuestCards: [],
-				consecutiveRejects: 0,
-				updatedAt: Date.now(),
-			},
-		};
+		// No majority yet — stay in team_vote
+		return { ok: true, state: newState };
 	},
 
 	// ----- Quest -----

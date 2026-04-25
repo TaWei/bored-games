@@ -21,9 +21,11 @@
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "build:dist": "tsc --project tsconfig.json",
-    "watch": "tsc --project tsconfig.json --watch"
+    "watch": "tsc --project tsconfig.json --watch",
+    "test": "bun test src/__tests__/"
   },
   "devDependencies": {
+    "bun-types": "^1.3.13",
     "typescript": "^5.4.0"
   }
 }

@@ -259,8 +259,8 @@ export function assignCodenamesRoles(
 	const midpoint = Math.ceil(players.length / 2);
 	return players.map((sessionId, i) => {
 		const isRed = i < midpoint;
-		const teammates = players.filter((_, j) => (j < midpoint) === isRed && j !== i);
-		const isSpymaster = teammates.length === 0; // first player on each team is spymaster
+		// First player on each team (index 0 or midpoint) is the spymaster
+		const isSpymaster = i === 0 || i === midpoint;
 		return {
 			sessionId,
 			displayName: playerNames[sessionId] ?? 'Player',
@@ -418,7 +418,7 @@ function applyGuessing_(
 		};
 	}
 
-	// Friendly agent — check if team won
+	// Friendly agent — check if team won (uses newGrid so count is accurate)
 	if (card.type === state.activeTeam) {
 		if (countRemaining(newGrid, state.activeTeam) === 0) {
 			return {
@@ -480,8 +480,8 @@ export const codenamesEngine: GameEngine<
 		const playerStates: CodenamesPlayerState[] = players.map((sessionId, i) => {
 			const isRed = i < midpoint;
 			const team: CodenamesTeam = isRed ? 'red' : 'blue';
-			const teammates = players.filter((_, j) => (j < midpoint) === isRed && j !== i);
-			const isSpymaster = teammates.length === 0; // first on each team
+			// First player on each team (index 0 or midpoint) is the spymaster
+			const isSpymaster = i === 0 || i === midpoint;
 			return {
 				sessionId,
 				displayName: 'Player',
