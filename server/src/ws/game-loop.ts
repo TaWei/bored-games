@@ -27,6 +27,9 @@ import type {
   AvalonPlayerState,
   CodenamesMove,
   CodenamesPlayerState,
+  WerewolfMove,
+  WerewolfPlayerState,
+  WerewolfState,
 } from '@bored-games/shared';
 
 interface Connection {
@@ -1332,20 +1335,7 @@ export class GameLoop {
     }
 
     // Assign roles using the engine's exported helper
-    const { assignWerewolfRoles } = await import('@bored-games/shared/games/ultimate-werewolf').catch(() => {
-      return {
-        assignWerewolfRoles: (_players: string[], _names: Record<string, string>) => {
-          // Minimal fallback — unlikely to be needed since the engine is imported above
-          return _players.map((sessionId) => ({
-            sessionId,
-            displayName: _names[sessionId] ?? 'Player',
-            role: 'villager' as import('@bored-games/shared').WerewolfRole,
-            isDead: false,
-            hasVoted: false,
-          }));
-        },
-      };
-    });
+    const { assignWerewolfRoles } = await import('@bored-games/shared/games/werewolf');
 
     const playerStates = assignWerewolfRoles(playerIds, playerNames);
     this.werewolfPlayerStates = playerStates;
@@ -1467,7 +1457,7 @@ export class GameLoop {
     }
 
     const engine = getEngine('werewolf');
-    const result = engine.applyMove(werewolfState, { type: 'SEER_PEEK', target: msg.payload.target }, conn.sessionId);
+    const result = engine.applyMove(werewolfState, { type: 'WEREWOLF_PEEK', target: msg.payload.target }, conn.sessionId);
 
     if (!result.ok || !result.state) {
       return this.sendTo(conn.sessionId, {
@@ -1527,7 +1517,7 @@ export class GameLoop {
     }
 
     const engine = getEngine('werewolf');
-    const result = engine.applyMove(werewolfState, { type: 'HUNTER_SHOOT', target: msg.payload.target }, conn.sessionId);
+    const result = engine.applyMove(werewolfState, { type: 'WEREWOLF_HUNTER_SHOOT', target: msg.payload.target }, conn.sessionId);
 
     if (!result.ok || !result.state) {
       return this.sendTo(conn.sessionId, {
@@ -1594,7 +1584,7 @@ export class GameLoop {
   ): Promise<void> {
     if (!this.state || this.state.gameType !== 'werewolf') return;
     if (conn.isSpectator) return;
-    if (this.state.result) return;
+    if (this.state.phase === 'game_end') return;
 
     const werewolfState = this.state as import('@bored-games/shared').WerewolfState;
     const player = werewolfState.playerStates.find((p) => p.sessionId === conn.sessionId);
@@ -1612,7 +1602,7 @@ export class GameLoop {
     }
 
     const engine = getEngine('werewolf');
-    const result = engine.applyMove(werewolfState, { type: 'VOTE', target: msg.payload.target }, conn.sessionId);
+    const result = engine.applyMove(werewolfState, { type: 'WEREWOLF_VOTE', target: msg.payload.target }, conn.sessionId);
 
     if (!result.ok || !result.state) {
       return this.sendTo(conn.sessionId, {
@@ -1656,7 +1646,7 @@ export class GameLoop {
     }
 
     const engine = getEngine('werewolf');
-    const result = engine.applyMove(werewolfState, { type: 'PASS' }, conn.sessionId);
+    const result = engine.applyMove(werewolfState, { type: 'WEREWOLF_PASS' }, conn.sessionId);
 
     if (!result.ok || !result.state) {
       return this.sendTo(conn.sessionId, {

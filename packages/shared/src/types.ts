@@ -4,7 +4,7 @@
 
 // ---------- Session & Identity ----------
 
-export type GameType = 'tic-tac-toe' | 'chess' | 'connect-four' | 'avalon' | 'codenames';
+export type GameType = 'tic-tac-toe' | 'chess' | 'connect-four' | 'avalon' | 'codenames' | 'werewolf';
 
 export interface SessionMetadata {
   sessionId: string;
@@ -221,7 +221,7 @@ export type AvalonMove =
 	| { type: 'USE_WITCH'; target: string }
 	| { type: 'FLIP_LANCELOT' }; // Good/Evil Lancelot ability
 
-export type GameState = TicTacToeState | ChessState | AvalonState | CodenamesState;
+export type GameState = TicTacToeState | ChessState | AvalonState | CodenamesState | WerewolfState;
 
 // ---------- Codenames: Word Spy Game ----------
 
@@ -277,6 +277,94 @@ export type CodenamesMove =
 	| { type: 'GUESS'; cardIndex: number }
 	| { type: 'PASS' }; // Operative ends guessing
 
+// ---------- Werewolf: Secret Role Social Deduction ----------
+
+export type WerewolfRole =
+	| 'villager'
+	| 'werewolf'
+	| 'seer'
+	| 'hunter'
+	| 'cupid'
+	| 'witch'
+	| 'little_girl';
+
+export type WerewolfPhase =
+	| 'waiting'        // Lobby — players joining
+	| 'role_assignment' // Roles being distributed (server-side only)
+	| 'night'          // Night actions (Werewolves, Seer, etc.)
+	| 'day'            // Discussion time
+	| 'voting'         // Players voting to eliminate
+	| 'game_end';      // Game concluded
+
+export interface WerewolfPlayerState {
+	sessionId: string;
+	displayName: string;
+	role?: WerewolfRole;      // secret — only sent to owning player
+	isWerewolf?: boolean;     // secret — only sent to other Werewolves
+	isDead: boolean;
+	isAlive: boolean;         // computed: !isDead
+	hasVoted: boolean;
+	/** Last night action taken (for night-phase tracking) */
+	lastNightAction?: 'kill' | 'peek' | 'protect' | 'hunter_shoot' | null;
+	/** Cupid-linked partner sessionId (if cupid has linked them) */
+	cupidPartner?: string | null;
+	/** Whether cupid has linked this player to another */
+	isLinked?: boolean;
+}
+
+export interface WerewolfState extends BaseGameState {
+	gameType: 'werewolf';
+	/** Current game phase */
+	phase: WerewolfPhase;
+	/** Night number (starts at 1 after first night ends) */
+	nightNumber: number;
+	/** When the current phase started (unix ms) */
+	phaseStartedAt: number;
+	/** Secret player assignments (server-side only) */
+	playerStates: WerewolfPlayerState[];
+	/** Who was killed last night (null if no kill) */
+	lastKill: string | null;
+	/** Who was protected last night (Seer/Witch) */
+	lastProtect: string | null;
+	/** Who was peeked at by Seer last night */
+	lastPeek: string | null;
+	/** Seer peek result: sessionId -> role string */
+	seerPeekResults: Record<string, string>;
+	/** Hunter's pending kill target (only set after hunter dies) */
+	hunterKillTarget: string | null;
+	/** Session IDs of dead players */
+	deadPlayers: string[];
+	/** Final winner: 'villagers' | 'werewolves' | null */
+	winner: 'villagers' | 'werewolves' | null;
+	/** Extra info about game end */
+	gameEndReason?: string;
+	/** Current votes during voting phase: sessionId -> votedFor sessionId */
+	votes: Record<string, string>;
+	/** Who has voted in current voting round */
+	votesReceived: string[];
+	/** Players who were eliminated today (for display) */
+	eliminatedToday: string[];
+	// ---- Fields used by game-loop.ts handlers ----
+	/** Session IDs of alive players (kept in sync with isDead) */
+	alivePlayers: string[];
+	/** Werewolf kill target chosen last night */
+	werewolfKillTarget: string | null;
+	/** Session IDs who have submitted night actions this round */
+	nightActionsReceived: string[];
+	/** Number of consecutive tied votes */
+	consecutiveTies: number;
+	/** Whether day discussion has started (vs. immediate voting) */
+	dayStarted: boolean;
+}
+
+export type WerewolfMove =
+	| { type: 'WEREWOLF_KILL'; target: string }      // Werewolf night kill
+	| { type: 'WEREWOLF_PEEK'; target: string }     // Seer peek
+	| { type: 'WEREWOLF_PROTECT'; target: string } // Witch protect
+	| { type: 'WEREWOLF_HUNTER_SHOOT'; target: string } // Hunter shoot on death
+	| { type: 'WEREWOLF_VOTE'; target: string }    // Day vote eliminate
+	| { type: 'WEREWOLF_PASS' };                    // Skip night action
+
 // ---------- Move ----------
 
 export interface TicTacToeMove {
@@ -291,7 +379,7 @@ export interface ChessMove {
   to: string;   // e.g., 'e4'
 }
 
-export type Move = TicTacToeMove | ChessMove | AvalonMove | CodenamesMove;
+export type Move = TicTacToeMove | ChessMove | AvalonMove | CodenamesMove | WerewolfMove;
 
 // ---------- Move Result ----------
 
@@ -437,10 +525,17 @@ export type ClientMessage =
   | { type: 'AVALON_USE_TRICKSTER'; payload: { fakeFailTarget: string } }
   | { type: 'AVALON_USE_WITCH'; payload: { target: string } }
   | { type: 'AVALON_FLIP_LANCELOT' }
-  // Codenames-specific
-  | { type: 'CODENAMES_GIVE_CLUE'; payload: { word: string; number: number } }
-  | { type: 'CODENAMES_GUESS'; payload: { cardIndex: number } }
-  | { type: 'CODENAMES_PASS' };
+	// Codenames-specific
+	| { type: 'CODENAMES_GIVE_CLUE'; payload: { word: string; number: number } }
+	| { type: 'CODENAMES_GUESS'; payload: { cardIndex: number } }
+	| { type: 'CODENAMES_PASS' }
+	// Werewolf-specific
+	| { type: 'WEREWOLF_KILL'; payload: { target: string } }
+	| { type: 'WEREWOLF_PEEK'; payload: { target: string } }
+	| { type: 'WEREWOLF_PROTECT'; payload: { target: string } }
+	| { type: 'WEREWOLF_HUNTER_SHOOT'; payload: { target: string } }
+	| { type: 'WEREWOLF_VOTE'; payload: { target: string } }
+	| { type: 'WEREWOLF_PASS' };
 
 // --- Server → Client ---
 
@@ -478,8 +573,18 @@ export type ServerMessage =
   | { type: 'CODENAMES_ROLE_ASSIGNED'; payload: { team: CodenamesTeam; role: 'spymaster' | 'operative' } }
   | { type: 'CODENAMES_CLUE_GIVEN'; payload: { word: string; number: number; team: CodenamesTeam } }
   | { type: 'CODENAMES_CARD_REVEALED'; payload: { cardIndex: number; cardType: CodenamesCardType; guesser: string } }
-  | { type: 'CODENAMES_TURN_ENDED'; payload: { nextTeam: CodenamesTeam; startingTeam: CodenamesTeam } }
-  | { type: 'CODENAMES_GAME_END'; payload: { winner: CodenamesTeam; reason: string } };
+	| { type: 'CODENAMES_TURN_ENDED'; payload: { nextTeam: CodenamesTeam; startingTeam: CodenamesTeam } }
+	| { type: 'CODENAMES_GAME_END'; payload: { winner: CodenamesTeam; reason: string } }
+	// Werewolf-specific
+	| { type: 'WEREWOLF_ROLE_ASSIGNED'; payload: { role: WerewolfRole; teammates?: string[]; seerSees?: string[] } }
+	| { type: 'WEREWOLF_PHASE_CHANGE'; payload: { phase: WerewolfPhase; nightNumber: number; phaseStartedAt: number } }
+	| { type: 'WEREWOLF_NIGHT_ACTION'; payload: { playerId: string; action: string } }
+	| { type: 'WEREWOLF_SEER_RESULT'; payload: { target: string; role: string } }
+	| { type: 'WEREWOLF_DEATH'; payload: { sessionId: string; byHunter: boolean } }
+	| { type: 'WEREWOLF_KILL_RESULT'; payload: { target: string; died: boolean; byHunter: boolean } }
+	| { type: 'WEREWOLF_VOTE_UPDATE'; payload: { votes: Record<string, string>; votesReceived: string[] } }
+	| { type: 'WEREWOLF_VOTE_RESULT'; payload: { eliminated: string | null; tied: boolean } }
+	| { type: 'WEREWOLF_GAME_END'; payload: { winner: 'villagers' | 'werewolves'; reason: string } };
 
 // ---------- Rate Limit Error ----------
 
