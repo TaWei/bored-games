@@ -21,7 +21,7 @@ export function GamePage() {
   const navigate = useNavigate();
   const { session } = useSession();
   const { room, isLoading, error } = useRoom();
-  const { leaveRoom, resign } = useGame();
+  const { leaveRoom, resign } = useGame({ roomCode: code });
   const [showShareToast, setShowShareToast] = useState(false);
 
   const shareLink = `${window.location.origin}/room/${code}`;

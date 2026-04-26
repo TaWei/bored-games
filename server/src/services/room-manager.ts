@@ -101,13 +101,14 @@ export async function joinRoom(
 
   const room: Room = JSON.parse(raw);
 
-  if (room.status !== 'waiting') {
-    throw new RoomError('This game has already started.', 'GAME_IN_PROGRESS', 400);
+  // Check if already in room (handles reconnect after game started)
+  if (room.players.some((p) => p.sessionId === sessionId)) {
+    // Player already in room — return current room (even if game in progress)
+    return { room, symbol: room.players.find((p) => p.sessionId === sessionId)!.symbol };
   }
 
-  if (room.players.some((p) => p.sessionId === sessionId)) {
-    // Player already in room — return current room
-    return { room, symbol: room.players.find((p) => p.sessionId === sessionId)!.symbol };
+  if (room.status !== 'waiting') {
+    throw new RoomError('This game has already started.', 'GAME_IN_PROGRESS', 400);
   }
 
   if (room.players.length >= room.maxPlayers) {

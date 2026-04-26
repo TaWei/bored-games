@@ -8,6 +8,7 @@ import { redis, CHANNELS } from '../lib/redis';
 import { config, ROOM_TTL_MS, MOVE_RATE_LIMIT } from '../lib/config';
 import {
   getRoom,
+  getGameState,
   saveGameState,
   updateRoomStatus,
   leaveRoom,
@@ -359,50 +360,85 @@ export class GameLoop {
   // ----- Game flow -----
 
   private async checkAndStartGame(): Promise<void> {
-    if (this.room?.status === 'in_progress') return;
-    const minPlayers = this.room ? getEngine(this.room.gameType).minPlayers : 2;
-    if (this.connections.size < minPlayers) return;
-
     const room = await getRoom(this.roomCode);
     if (!room) return;
-    if (room.status !== 'waiting') return;
-    if (room.players.length < room.maxPlayers) return;
 
-    // Start the game!
-    await updateRoomStatus(this.roomCode, 'in_progress');
+    if (room.status === 'waiting') {
+      // Normal path: wait for room to fill
+      const minPlayers = getEngine(room.gameType).minPlayers;
+      if (this.connections.size < minPlayers) return;
+      if (room.players.length < room.maxPlayers) return;
 
-    const engine = getEngine(room.gameType);
-    const playerIds = room.players.map((p) => p.sessionId);
-    this.state = engine.createInitialState(playerIds);
-    this.room = room;
-    this.gameStartTime = Date.now();
-    this.room.rematchRequests = [];
+      // Start the game!
+      await updateRoomStatus(this.roomCode, 'in_progress');
+      const engine = getEngine(room.gameType);
+      const playerIds = room.players.map((p) => p.sessionId);
+      this.state = engine.createInitialState(playerIds);
+      this.room = room;
+      this.gameStartTime = Date.now();
+      this.room.rematchRequests = [];
 
-    await saveGameState(this.roomCode, this.state);
+      await saveGameState(this.roomCode, this.state);
 
-    // ----- Avalon role assignment (server-side secret) -----
-    if (room.gameType === 'avalon') {
-      await this.assignAvalonRoles(room, playerIds);
-    }
+      // ----- Avalon role assignment (server-side secret) -----
+      if (room.gameType === 'avalon') {
+        await this.assignAvalonRoles(room, playerIds);
+      }
 
-    // ----- Codenames grid generation (server-side secret) -----
-    if (room.gameType === 'codenames') {
-      await this.assignCodenamesRoles(room, playerIds);
-    }
+      // ----- Codenames grid generation (server-side secret) -----
+      if (room.gameType === 'codenames') {
+        await this.assignCodenamesRoles(room, playerIds);
+      }
 
-    // ----- Werewolf role assignment (server-side secret) -----
-    if (room.gameType === 'werewolf') {
-      await this.assignWerewolfRoles(room, playerIds);
-    }
+      // ----- Werewolf role assignment (server-side secret) -----
+      if (room.gameType === 'werewolf') {
+        await this.assignWerewolfRoles(room, playerIds);
+      }
 
-    await this.broadcast({
-      type: 'GAME_START',
-      payload: { state: this.state },
-    });
+      await this.broadcast({
+        type: 'GAME_START',
+        payload: { state: this.state },
+      });
 
-    // Send individual ROOM_JOINED messages to each player with their own symbol
-    for (const conn of this.connections.values()) {
-      if (!conn.isSpectator) {
+      // Send individual ROOM_JOINED messages to each player with their own symbol
+      for (const conn of this.connections.values()) {
+        if (!conn.isSpectator) {
+          const playerSymbol = room.players.find((p) => p.sessionId === conn.sessionId)?.symbol ?? 'X';
+          await this.sendTo(conn.sessionId, {
+            type: 'ROOM_JOINED',
+            payload: {
+              room,
+              symbol: playerSymbol,
+              mySessionId: conn.sessionId,
+            },
+          });
+        }
+      }
+
+      // Start heartbeat monitoring
+      this.startHeartbeat();
+    } else if (room.status === 'in_progress') {
+      // Room already started (game started via HTTP before WS connected for all players)
+      if (!this.room) {
+        this.room = room;
+      }
+
+      // Try to load existing state from Redis
+      if (!this.state) {
+        this.state = await getGameState(this.roomCode);
+      }
+
+      if (!this.state) {
+        // State missing in Redis, reconstruct from room info
+        const engine = getEngine(room.gameType);
+        const playerIds = room.players.map((p) => p.sessionId);
+        this.state = engine.createInitialState(playerIds);
+        await saveGameState(this.roomCode, this.state);
+      }
+
+      // Send game state to the newly connected player
+      const conn = [...this.connections.values()].find(c => !c.isSpectator);
+      if (conn) {
         const playerSymbol = room.players.find((p) => p.sessionId === conn.sessionId)?.symbol ?? 'X';
         await this.sendTo(conn.sessionId, {
           type: 'ROOM_JOINED',
@@ -412,11 +448,18 @@ export class GameLoop {
             mySessionId: conn.sessionId,
           },
         });
+
+        await this.sendTo(conn.sessionId, {
+          type: 'GAME_START',
+          payload: { state: this.state },
+        });
+      }
+
+      // Start heartbeat if not already running
+      if (!this.heartbeatInterval) {
+        this.startHeartbeat();
       }
     }
-
-    // Start heartbeat monitoring
-    this.startHeartbeat();
   }
 
   private async handleGameEnd(): Promise<void> {

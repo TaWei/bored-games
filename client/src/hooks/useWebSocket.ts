@@ -23,8 +23,13 @@ export function useWebSocket({ roomCode, mode = 'play', enabled = true }: UseWeb
 
   // --- Setup socket + handlers ---
   useEffect(() => {
-    if (!enabled || !sessionId || !roomCode) return;
+    console.log('[WS] Effect running — enabled:', enabled, 'sessionId:', sessionId, 'roomCode:', roomCode, 'mode:', mode);
+    if (!enabled || !sessionId || !roomCode) {
+      console.log('[WS] Early return — missing:', !enabled ? 'enabled' : !sessionId ? 'sessionId' : 'roomCode');
+      return;
+    }
 
+    console.log('[WS] Creating GameSocket with URL:', `/ws?sessionId=${encodeURIComponent(sessionId)}&room=${encodeURIComponent(roomCode)}&mode=${mode}`);
     // Show loading state while connecting
     setLoading(true);
     setError(null);
