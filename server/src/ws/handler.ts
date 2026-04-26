@@ -7,7 +7,8 @@ import { GameLoop } from './game-loop';
 import { getRoom, joinRoom, joinAsSpectator } from '../services/room-manager';
 import type { ClientMessage, ServerMessage } from '@bored-games/shared';
 import { isValidRoomCode, isValidSessionId } from '@bored-games/shared';
-import { redis, redisSub, CHANNELS } from '../lib/redis';
+import { redis, redisSub, CHANNELS, KEYS } from '../lib/redis';
+import { ROOM_TTL_MS } from '../lib/config';
 
 // Global registry of active game loops by room code
 const activeGameLoops = new Map<string, GameLoop>();
@@ -38,8 +39,25 @@ export async function handleWebSocket(
   isSpectator: boolean
 ): Promise<void> {
   try {
+    console.log(`[WS] handleWebSocket — sessionId=${sessionId} room=${roomCode} spectator=${isSpectator}`);
+
+    // Keep ws alive — Bun may GC the ws reference if we don't store it
+    // (Bun's WebSocket uses a pooled reference model)
+    const wsRef = ws;
+
     // Look up room
-    const room = await getRoom(roomCode);
+    console.log(`[WS] calling getRoom for room=${roomCode}...`);
+    console.log(`[WS] ws ref check — ws=${typeof wsRef === 'undefined' ? 'undefined' : 'defined'}, ws.data=${ws.data ? 'exists' : 'null'}`);
+
+    let room: Awaited<ReturnType<typeof getRoom>>;
+    try {
+      room = await getRoom(roomCode);
+    } catch (err) {
+      console.log(`[WS] getRoom THREW ERROR — err=${err}, closing socket with 1011`);
+      ws.close(1011, 'Redis error');
+      return;
+    }
+    console.log(`[WS] getRoom result — room: ${room ? `status=${room.status} players=${room.players.length}` : 'null'}`);
     if (!room) {
       ws.send(JSON.stringify({ type: 'ERROR', payload: { code: 'ROOM_NOT_FOUND', message: `Room ${roomCode} not found` } } satisfies ServerMessage));
       ws.close();
@@ -47,7 +65,7 @@ export async function handleWebSocket(
     }
 
     // Check if room is in a state where joining makes sense
-    if (room.status === 'completed' || room.status === 'abandoned') {
+    if (room.status === 'completed') {
       ws.send(JSON.stringify({
         type: 'ERROR',
         payload: { code: 'ROOM_CLOSED', message: 'This room has been closed.' },
@@ -56,14 +74,37 @@ export async function handleWebSocket(
       return;
     }
 
+    // Allow reconnection to in_progress rooms (player disconnecting/reconnecting)
+    // Also allow abandoned rooms so players can rejoin if they disconnected mid-game
+    if (room.status === 'abandoned') {
+      // Re-enable the room for the original players to rejoin
+      room.status = 'in_progress';
+      await redis.set(KEYS.room(roomCode), JSON.stringify(room), 'EX', ROOM_TTL_MS);
+    }
+
     const displayName = room.players.find(p => p.sessionId === sessionId)?.displayName
       ?? room.spectators.find(s => s.sessionId === sessionId)?.displayName
       ?? 'Player';
 
-    // Join the room (if not already a player)
+    // Join the room (if not already a player).
+    // Use the room we already fetched above — don't call joinRoom again if the
+    // player is already in room.players (handles the reconnect-after-HTTP-join case
+    // where the player was added by the REST call but the WS is a fresh connection).
     if (!isSpectator) {
+      const alreadyJoined = room.players.some((p) => p.sessionId === sessionId);
       try {
-        const { symbol } = await joinRoom(roomCode, sessionId);
+        const { symbol } = alreadyJoined
+          ? { symbol: room.players.find((p) => p.sessionId === sessionId)!.symbol }
+          : await joinRoom(roomCode, sessionId);
+
+        // Notify other players of (re)connection via Redis pub/sub
+        // The GameLoop subscriber receives PLAYER_JOINED and broadcasts to all clients
+        if (alreadyJoined) {
+          await redis.publish(
+            CHANNELS.roomEvents(roomCode),
+            JSON.stringify({ type: 'PLAYER_JOINED', sessionId })
+          );
+        }
 
         // Send connected + room info
         ws.send(JSON.stringify({
@@ -119,7 +160,11 @@ export async function handleWebSocket(
 // Called by index.ts websocket.message handler to route a message to the game loop
 export function handleWSMessage(ws: ServerWebSocket<WsContext>, rawMessage: string | Buffer): void {
   const data = ws.data as WsContext & { loop?: GameLoop };
-  if (!data.loop) return;
+  console.log(`[WS] handleWSMessage — sessionId=${data.sessionId} roomCode=${data.roomCode} hasLoop=${!!data.loop} msg=${typeof rawMessage === 'string' ? rawMessage.slice(0, 100) : 'Blob'}`);
+  if (!data.loop) {
+    console.warn('[WS] handleWSMessage — no loop! ws.data:', JSON.stringify(data));
+    return;
+  }
 
   const sessionId = data.sessionId;
   const raw = rawMessage instanceof Buffer ? rawMessage.toString() : rawMessage;
@@ -135,7 +180,7 @@ export function handleWSClose(ws: ServerWebSocket<WsContext>): void {
 
   data.loop.removeConnection(sessionId);
 
-  if (!isSpectator) {
+  if (!isSpectator && !(data as any).intentionallyLeft) {
     redis.publish(
       CHANNELS.roomEvents(roomCode),
       JSON.stringify({ type: 'PLAYER_LEFT', sessionId, reason: 'disconnected' })

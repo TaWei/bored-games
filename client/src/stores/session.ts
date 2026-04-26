@@ -34,7 +34,7 @@ interface SessionState {
 export const useSessionStore = create<SessionState>()(
   persist(
     (set, _get) => ({
-      sessionId: getOrCreateSessionId(),
+      sessionId: localStorage.getItem('bored-games-session') ?? '',
       displayName: generateDisplayName(),
       isLoaded: false,
 
