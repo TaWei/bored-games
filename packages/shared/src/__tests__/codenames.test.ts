@@ -316,8 +316,8 @@ describe('codenamesEngine.applyMove — GUESS', () => {
 
   test('finding last red agent card ends game with red as winner', () => {
     const grid = [
-      { word: 'CAT', type: 'red', revealed: false },
-      { word: 'DOG', type: 'red', revealed: true },
+      { word: 'CAT', type: 'red' as const, revealed: false },
+      { word: 'DOG', type: 'red' as const, revealed: true },
       ...Array.from({ length: 23 }, (_, i) => ({ word: 'WORD' + i, type: 'bystander' as const, revealed: false })),
     ];
     const state = makeState({
@@ -422,6 +422,249 @@ describe('codenamesEngine.checkGameEnd', () => {
     const result = codenamesEngine.checkGameEnd(state);
     expect(result).toBeTruthy();
     expect(result!.winner).toBe('red');
+  });
+});
+
+describe('codenamesEngine.isValidMove', () => {
+  test('returns true for a valid clue move', () => {
+    const state = makeState({ phase: 'clue' });
+    expect(codenamesEngine.isValidMove(state, { type: 'GIVE_CLUE', word: 'animal', number: 2 }, SPY_RED)).toBe(true);
+  });
+
+  test('returns false for an invalid clue move (wrong phase)', () => {
+    const state = makeState({ phase: 'guessing' });
+    expect(codenamesEngine.isValidMove(state, { type: 'GIVE_CLUE', word: 'animal', number: 2 }, SPY_RED)).toBe(false);
+  });
+
+  test('returns true for a valid guess move', () => {
+    const state = makeState({
+      phase: 'guessing',
+      activeTeam: 'red',
+      currentClue: { word: 'ANIMAL', number: 2 },
+      guessesRemaining: 2,
+    });
+    expect(codenamesEngine.isValidMove(state, { type: 'GUESS', cardIndex: 0 }, OP_RED)).toBe(true);
+  });
+
+  test('returns false for a guess move on wrong team', () => {
+    const state = makeState({
+      phase: 'guessing',
+      activeTeam: 'red',
+      currentClue: { word: 'ANIMAL', number: 2 },
+      guessesRemaining: 2,
+    });
+    expect(codenamesEngine.isValidMove(state, { type: 'GUESS', cardIndex: 0 }, OP_BLUE)).toBe(false);
+  });
+
+  test('returns false after game ends', () => {
+    const state = makeState({ phase: 'game_end', winner: 'red' });
+    expect(codenamesEngine.isValidMove(state, { type: 'GUESS', cardIndex: 0 }, OP_RED)).toBe(false);
+  });
+});
+
+describe('codenamesEngine.getValidMoves', () => {
+  test('spymaster in clue phase gets GIVE_CLUE placeholder', () => {
+    const state = makeState({ phase: 'clue', activeTeam: 'red' });
+    const moves = codenamesEngine.getValidMoves(state, SPY_RED);
+    expect(moves).toEqual([{ type: 'GIVE_CLUE', word: '', number: 0 }]);
+  });
+
+  test('operative in clue phase gets empty array', () => {
+    const state = makeState({ phase: 'clue', activeTeam: 'red' });
+    const moves = codenamesEngine.getValidMoves(state, OP_RED);
+    expect(moves).toHaveLength(0);
+  });
+
+  test('operative in guessing phase gets all unrevealed card guesses + PASS', () => {
+    // makeState generates a fresh 25-card grid
+    const state = makeState({
+      phase: 'guessing',
+      activeTeam: 'red',
+      guessesRemaining: 3,
+    });
+
+    const moves = codenamesEngine.getValidMoves(state, OP_RED);
+    // 25 unrevealed cards + PASS = 26 moves
+    expect(moves).toHaveLength(26);
+    expect(moves).toContainEqual({ type: 'PASS' });
+    // All 25 card indices should be present
+    for (let i = 0; i < 25; i++) {
+      expect(moves).toContainEqual({ type: 'GUESS', cardIndex: i });
+    }
+  });
+
+  test('spymaster in guessing phase gets empty array', () => {
+    const state = makeState({ phase: 'guessing', activeTeam: 'red' });
+    const moves = codenamesEngine.getValidMoves(state, SPY_RED);
+    expect(moves).toHaveLength(0);
+  });
+
+  test('returns empty in waiting phase', () => {
+    const state = makeState({ phase: 'waiting' });
+    expect(codenamesEngine.getValidMoves(state, SPY_RED)).toHaveLength(0);
+  });
+
+  test('returns empty for unknown player', () => {
+    const state = makeState({ phase: 'clue' });
+    expect(codenamesEngine.getValidMoves(state, 'unknown')).toHaveLength(0);
+  });
+});
+
+describe('codenamesEngine — team starting assignment', () => {
+  test('startingTeam is set to red on createInitialState', () => {
+    const state = codenamesEngine.createInitialState(players4);
+    expect(state.startingTeam).toBe('red');
+  });
+
+  test('startingTeam remains red when red goes first', () => {
+    const state = makeState({ phase: 'clue', activeTeam: 'red', startingTeam: 'red' });
+    // Red spymaster gives clue
+    const r1 = codenamesEngine.applyMove(state, { type: 'GIVE_CLUE', word: 'animal', number: 1 }, SPY_RED);
+    // Red operative guesses correctly but blue team will go next
+    // Actually, red operative keeps guessing until done, then turn ends
+    expect(r1.state!.startingTeam).toBe('red');
+  });
+
+  test('activeTeam alternates correctly after red turn ends', () => {
+    const state = makeState({
+      phase: 'guessing',
+      activeTeam: 'red',
+      currentClue: { word: 'ANIMAL', number: 1 },
+      guessesRemaining: 1,
+      grid: [
+        { word: 'CAT', type: 'bystander', revealed: false },
+        ...Array.from({ length: 24 }, (_, i) => ({ word: 'W' + i, type: 'bystander' as const, revealed: false })),
+      ],
+    });
+    // Red operative hits bystander → turn ends
+    const r1 = codenamesEngine.applyMove(state, { type: 'GUESS', cardIndex: 0 }, OP_RED);
+    expect(r1.state!.activeTeam).toBe('blue');
+    expect(r1.state!.phase).toBe('clue');
+  });
+
+  test('activeTeam alternates correctly after blue turn ends', () => {
+    const state = makeState({
+      phase: 'guessing',
+      activeTeam: 'blue',
+      currentClue: { word: 'ANIMAL', number: 1 },
+      guessesRemaining: 1,
+      grid: [
+        { word: 'CAT', type: 'bystander', revealed: false },
+        ...Array.from({ length: 24 }, (_, i) => ({ word: 'W' + i, type: 'bystander' as const, revealed: false })),
+      ],
+    });
+    const r1 = codenamesEngine.applyMove(state, { type: 'GUESS', cardIndex: 0 }, OP_BLUE);
+    expect(r1.state!.activeTeam).toBe('red');
+    expect(r1.state!.phase).toBe('clue');
+  });
+});
+
+describe('codenamesEngine — multi-round flow', () => {
+  test('red then blue each give one clue and return to red', () => {
+    let state = makeState({ phase: 'clue', activeTeam: 'red', startingTeam: 'red' });
+
+    // Red gives clue
+    const r1 = codenamesEngine.applyMove(state, { type: 'GIVE_CLUE', word: 'animal', number: 2 }, SPY_RED);
+    expect(r1.state!.phase).toBe('guessing');
+    expect(r1.state!.activeTeam).toBe('red');
+
+    // Red operative guesses correctly, ending turn
+    const r2 = codenamesEngine.applyMove(r1.state!, { type: 'GUESS', cardIndex: 0 }, OP_RED);
+    // (depending on what card it hits, turn may or may not end)
+
+    // Simpler: red operative passes → team switches to blue, startingTeam also switches
+    let s = makeState({ phase: 'guessing', activeTeam: 'red', currentClue: { word: 'ANIMAL', number: 2 }, guessesRemaining: 2, startingTeam: 'red' });
+    s = codenamesEngine.applyMove(s, { type: 'PASS' }, OP_RED).state!;
+    expect(s.phase).toBe('clue');
+    expect(s.activeTeam).toBe('blue');
+    // PASS switches startingTeam to the next team (blue), so next round starts with blue
+    expect(s.startingTeam).toBe('blue');
+
+    // Blue gives clue
+    const b1 = codenamesEngine.applyMove(s, { type: 'GIVE_CLUE', word: 'color', number: 1 }, SPY_BLUE);
+    expect(b1.state!.phase).toBe('guessing');
+    expect(b1.state!.activeTeam).toBe('blue');
+
+    // Blue operative passes
+    let s2 = codenamesEngine.applyMove(b1.state!, { type: 'PASS' }, OP_BLUE).state!;
+    expect(s2.phase).toBe('clue');
+    expect(s2.activeTeam).toBe('red');
+    // startingTeam stays with the original starting team
+    expect(s2.startingTeam).toBe('red');
+  });
+});
+
+describe('codenamesEngine — blue team winning path', () => {
+  test('blue team wins by finding all their agents', () => {
+    // 8 blue agents total — blue finds the last one
+    const grid = [
+      { word: 'AGENT1', type: 'blue' as const, revealed: true },
+      { word: 'AGENT2', type: 'blue' as const, revealed: true },
+      { word: 'AGENT3', type: 'blue' as const, revealed: true },
+      { word: 'AGENT4', type: 'blue' as const, revealed: true },
+      { word: 'AGENT5', type: 'blue' as const, revealed: true },
+      { word: 'AGENT6', type: 'blue' as const, revealed: true },
+      { word: 'AGENT7', type: 'blue' as const, revealed: true },
+      { word: 'LASTBLUE', type: 'blue' as const, revealed: false },
+      { word: 'RED1', type: 'red' as const, revealed: false },
+      ...Array.from({ length: 16 }, (_, i) => ({ word: 'W' + i, type: 'bystander' as const, revealed: false })),
+    ];
+    const state = makeState({
+      phase: 'guessing',
+      activeTeam: 'blue',
+      currentClue: { word: 'BLUE', number: 1 },
+      guessesRemaining: 5,
+      grid,
+    });
+    const result = codenamesEngine.applyMove(state, { type: 'GUESS', cardIndex: 7 }, OP_BLUE);
+    expect(result.ok).toBe(true);
+    expect(result.state!.phase).toBe('game_end');
+    expect(result.state!.winner).toBe('blue');
+  });
+
+  test('blue team loses by hitting assassin', () => {
+    const grid = [
+      { word: 'DEATH', type: 'assassin' as const, revealed: false },
+      ...Array.from({ length: 24 }, (_, i) => ({ word: 'W' + i, type: 'bystander' as const, revealed: false })),
+    ];
+    const state = makeState({
+      phase: 'guessing',
+      activeTeam: 'blue',
+      currentClue: { word: 'DANGER', number: 5 },
+      guessesRemaining: 5,
+      grid,
+    });
+    const result = codenamesEngine.applyMove(state, { type: 'GUESS', cardIndex: 0 }, OP_BLUE);
+    expect(result.ok).toBe(true);
+    expect(result.state!.phase).toBe('game_end');
+    expect(result.state!.winner).toBe('red');
+    expect(result.state!.gameEndReason).toContain('Assassin');
+  });
+});
+
+describe('codenamesEngine — card reveal persists (applyMove bug regression)', () => {
+  test('guessing a card updates grid state (not just the result state)', () => {
+    // This is a regression test for a bug where applyMove computed
+    // newGrid but never assigned it to state.grid
+    const grid = [
+      { word: 'CAT', type: 'red' as const, revealed: false },
+      { word: 'DOG', type: 'blue' as const, revealed: false },
+      ...Array.from({ length: 23 }, (_, i) => ({ word: 'W' + i, type: 'bystander' as const, revealed: false })),
+    ];
+    const state = makeState({
+      phase: 'guessing',
+      activeTeam: 'red',
+      currentClue: { word: 'ANIMAL', number: 2 },
+      guessesRemaining: 3,
+      grid,
+    });
+    const result = codenamesEngine.applyMove(state, { type: 'GUESS', cardIndex: 0 }, OP_RED);
+    expect(result.ok).toBe(true);
+    // The card must actually be revealed in the returned state
+    expect(result.state!.grid[0]!.revealed).toBe(true);
+    // And subsequent calls should see it as revealed
+    const second = codenamesEngine.applyMove(result.state!, { type: 'GUESS', cardIndex: 0 }, OP_RED);
+    expect(second.ok).toBe(false);
   });
 });
 

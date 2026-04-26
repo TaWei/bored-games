@@ -21,6 +21,7 @@ export function CreateRoom() {
 
     try {
       const { roomCode } = await createRoom(selectedGame);
+      setLoading(false);
       navigate(`/room/${roomCode}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create room');

@@ -17,13 +17,17 @@ interface UseWebSocketOptions {
 
 export function useWebSocket({ roomCode, mode = 'play', enabled = true }: UseWebSocketOptions) {
   const { sessionId, displayName } = useSessionStore();
-  const { setRoom, updateRoom, addPlayer, removePlayer, addSpectator, removeSpectator, setError } = useRoomStore();
+  const { setRoom, updateRoom, addPlayer, removePlayer, addSpectator, removeSpectator, setError, setLoading } = useRoomStore();
   const { setState, setLastMove, setLatency, setConnected, clearGame } = useGameStore();
   const socketRef = useRef<GameSocket | null>(null);
 
   // --- Setup socket + handlers ---
   useEffect(() => {
     if (!enabled || !sessionId || !roomCode) return;
+
+    // Show loading state while connecting
+    setLoading(true);
+    setError(null);
 
     const socket = new GameSocket(sessionId, roomCode, mode);
     socketRef.current = socket;
@@ -38,6 +42,7 @@ export function useWebSocket({ roomCode, mode = 'play', enabled = true }: UseWeb
       const { room, symbol, mySessionId } = msg.payload;
       setRoom(room, symbol, mode === 'spectate');
       setConnected(true);
+      setLoading(false);
     });
 
     socket.on('PLAYER_JOINED', (msg) => {
@@ -81,11 +86,13 @@ export function useWebSocket({ roomCode, mode = 'play', enabled = true }: UseWeb
     socket.on('ERROR', (msg) => {
       if (msg.type !== 'ERROR') return;
       setError(msg.payload.message);
+      setLoading(false);
     });
 
     socket.on('ROOM_NOT_FOUND', () => {
       setError('Room not found. Check the code and try again.');
       setConnected(false);
+      setLoading(false);
     });
 
     // ── Avalon-specific handlers ──

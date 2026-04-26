@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { isValidSessionId } from '../utils/session';
+import { isValidSessionId, hashSessionId } from '../utils/session';
 
 describe('isValidSessionId', () => {
   test('accepts valid UUID v4 strings', () => {
@@ -42,5 +42,42 @@ describe('isValidSessionId', () => {
     expect(isValidSessionId(123)).toBe(false);
     // @ts-ignore
     expect(isValidSessionId({})).toBe(false);
+  });
+});
+
+describe('hashSessionId', () => {
+  test('produces a SHA-256 hex digest (64 characters)', async () => {
+    const hash = await hashSessionId('test-session-id');
+    expect(hash).toHaveLength(64);
+    expect(/^[a-f0-9]{64}$/.test(hash)).toBe(true);
+  });
+
+  test('produces consistent output for same input', async () => {
+    const hash1 = await hashSessionId('consistent-input');
+    const hash2 = await hashSessionId('consistent-input');
+    expect(hash1).toBe(hash2);
+  });
+
+  test('produces different output for different inputs', async () => {
+    const hash1 = await hashSessionId('input-a');
+    const hash2 = await hashSessionId('input-b');
+    expect(hash1).not.toBe(hash2);
+  });
+
+  test('produces a valid UUID v4 hashed format (deterministic)', async () => {
+    const hash = await hashSessionId('123e4567-e89b-42d3-a456-426614174000');
+    // SHA-256 produces 64 hex chars — same format as session ID storage
+    expect(hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  test('empty string produces a valid hash', async () => {
+    const hash = await hashSessionId('');
+    expect(hash).toHaveLength(64);
+  });
+
+  test('unicode input is handled correctly', async () => {
+    const hash = await hashSessionId('名前');
+    expect(hash).toHaveLength(64);
+    expect(/^[a-f0-9]{64}$/.test(hash)).toBe(true);
   });
 });

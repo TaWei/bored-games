@@ -306,7 +306,7 @@ function isSquareAttacked(board: Board, square: [number, number], byColor: Color
         if (!inBounds(r, cc)) break;
         const p = board[r][cc];
         if (p) {
-          if (p.color !== byColor) {
+          if (p.color === byColor) {
             const expected = dIdx === 0 ? (['r', 'q'] as PieceType[]) : (['b', 'q'] as PieceType[]);
             if (expected.includes(p.type)) return true;
           }

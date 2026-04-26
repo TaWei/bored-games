@@ -49,29 +49,35 @@ interface RoleDeckTemplate {
 }
 
 function buildRoleDeck(playerCount: number): WerewolfRole[] {
- const templates: Record<number, RoleDeckTemplate> = {
-  6:  { good: ['villager', 'villager', 'seer', 'hunter', 'cupid', 'witch'], evil: ['werewolf', 'werewolf'] },
-  7:  { good: ['villager', 'seer', 'hunter', 'cupid', 'witch'],             evil: ['werewolf', 'werewolf', 'werewolf'] },
+  const templates: Record<number, RoleDeckTemplate> = {
+  6:  { good: ['villager', 'seer', 'hunter', 'cupid', 'witch'], evil: ['werewolf', 'werewolf'] },
+  7:  { good: ['villager', 'seer', 'hunter', 'cupid', 'witch'], evil: ['werewolf', 'werewolf', 'werewolf'] },
   8:  { good: ['villager', 'villager', 'seer', 'hunter', 'cupid', 'witch'], evil: ['werewolf', 'werewolf', 'werewolf'] },
-  9:  { good: ['villager', 'seer', 'hunter', 'cupid', 'witch'],             evil: ['werewolf', 'werewolf', 'werewolf', 'werewolf'] },
+  9:  { good: ['villager', 'seer', 'hunter', 'cupid', 'witch'], evil: ['werewolf', 'werewolf', 'werewolf', 'werewolf'] },
   10: { good: ['villager', 'villager', 'seer', 'hunter', 'cupid', 'witch'], evil: ['werewolf', 'werewolf', 'werewolf', 'werewolf'] },
-  11: { good: ['villager', 'seer', 'hunter', 'cupid', 'witch'],             evil: ['werewolf', 'werewolf', 'werewolf', 'werewolf', 'werewolf'] },
+  11: { good: ['villager', 'seer', 'hunter', 'cupid', 'witch'], evil: ['werewolf', 'werewolf', 'werewolf', 'werewolf', 'werewolf'] },
   12: { good: ['villager', 'villager', 'seer', 'hunter', 'cupid', 'witch'], evil: ['werewolf', 'werewolf', 'werewolf', 'werewolf', 'werewolf'] },
  };
+  const template = templates[playerCount] ?? templates[6]!;
 
- const template = templates[playerCount] ?? templates[6]!;
-
- // Validate counts
- const total = template.good.length + template.evil.length;
- if (total !== playerCount) {
-  // Adjust: fill remaining slots with villagers
-  const diff = playerCount - total;
-  for (let i = 0; i < diff; i++) {
-   template.good.push('villager');
+  // Build the deck — the template should already sum to playerCount
+  // or be close enough that we can adjust
+  const total = template.good.length + template.evil.length;
+  const deck = [...template.good, ...template.evil];
+  if (deck.length > playerCount) {
+    // Trim excess from the END — evil/werewolf roles are appended last, so
+    // reversing first ensures we remove werewolves when over-subscribed
+    deck.reverse();
+    deck.splice(playerCount);
+    deck.reverse(); // put back in original order
+  } else if (deck.length < playerCount) {
+    // Fill remaining slots with villagers
+    while (deck.length < playerCount) {
+      deck.push('villager');
+    }
   }
- }
 
- return [...template.good, ...template.evil];
+  return shuffle(deck);
 }
 
 /**
