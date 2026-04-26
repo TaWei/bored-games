@@ -19,9 +19,9 @@ import type { Player } from '@bored-games/shared';
 export function GamePage() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
-  const { session } = useSession();
+  const { session, isLoaded } = useSession();
   const { room, isLoading, error } = useRoom();
-  const { leaveRoom, resign } = useGame({ roomCode: code });
+  const { leaveRoom, resign, state } = useGame({ roomCode: code });
   const [showShareToast, setShowShareToast] = useState(false);
 
   const shareLink = `${window.location.origin}/room/${code}`;
@@ -70,7 +70,6 @@ export function GamePage() {
     );
   }
 
-  const { state } = useGame();
   const myPlayer = room.players.find((p: Player) => p.sessionId === session.id);
   const isSpectating = !myPlayer && room.status !== 'waiting';
 

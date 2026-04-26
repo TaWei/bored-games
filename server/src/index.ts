@@ -69,6 +69,7 @@ const server = serve({
 
     // WebSocket upgrade path
     if (url.pathname === '/ws') {
+      console.log(`[WS] fetch /ws — url=${req.url} method=${req.method} headers=${JSON.stringify(Object.fromEntries(req.headers.entries()))}`);
       const sessionId = url.searchParams.get('sessionId') ?? '';
       const roomCode = (url.searchParams.get('room') ?? '').toUpperCase();
       const mode = (url.searchParams.get('mode') ?? 'play') as 'play' | 'spectate';
@@ -98,22 +99,36 @@ const server = serve({
     open(ws) {
       const { sessionId, roomCode, isSpectator } = ws.data as WsContext;
 
+      if (!sessionId || !roomCode) {
+        console.error('[WS] open — missing sessionId/roomCode in ws.data, closing');
+        ws.close(1011, 'Missing context data');
+        return;
+      }
+
       if (isDevelopment) {
         console.log(`🔌 WS open — session=${sessionId.slice(0, 8)}… room=${roomCode} spectator=${isSpectator}`);
       }
 
       handleWebSocket(ws as any, sessionId, roomCode, isSpectator).catch((err) => {
-        console.error('WS handler error:', err);
+        console.error('[WS] handleWebSocket threw:', err);
+        console.log(`[WS] Closing socket with 1011 — sessionId=${sessionId} roomCode=${roomCode}`);
         ws.close(1011, 'Internal error');
       });
     },
 
     message(ws, msg) {
       // Route message to the game loop via handleWSMessage
-      handleWSMessage(ws as any, msg as string | Buffer);
+      try {
+        handleWSMessage(ws as any, msg as string | Buffer);
+      } catch (err) {
+        console.error('[WS] handleWSMessage threw:', err);
+        console.log(`[WS] Closing socket with 1011 — sessionId=${ws.data?.sessionId} roomCode=${ws.data?.roomCode}`);
+        ws.close(1011, 'Message handler error');
+      }
     },
 
     close(ws, code, reason) {
+      console.log(`[WS] WebSocket closed — code=${code} reason=${reason} url=${ws.url}`);
       handleWSClose(ws as any);
     },
   },

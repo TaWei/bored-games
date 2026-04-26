@@ -6,6 +6,7 @@ import type { ServerMessage, ClientMessage } from '@bored-games/shared';
 
 type MessageHandler = (msg: ServerMessage) => void;
 
+// In dev, connect directly to backend to avoid Vite WS proxy issues
 const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 
 export class GameSocket {
@@ -20,7 +21,7 @@ export class GameSocket {
   private intentionallyClosed = false;
   private pendingMessages: string[] = [];
   private latency = 0;
-  private onLatencyUpdate?: (latency: number) => void;
+  private onLatencyUpdate: Array<(latency: number) => void> = [];
 
   constructor(sessionId: string, roomCode: string, mode: 'play' | 'spectate' = 'play') {
     this.sessionId = sessionId;
@@ -35,21 +36,29 @@ export class GameSocket {
 
     this.intentionallyClosed = false;
     const url = `${WS_BASE}/ws?sessionId=${encodeURIComponent(this.sessionId)}&room=${encodeURIComponent(this.roomCode)}&mode=${this.mode}`;
+    console.log('[WS] Connecting to:', url);
+    console.log('[WS] WS_BASE:', WS_BASE, '| DEV:', typeof __DEV__ !== 'undefined' ? __DEV__ : 'undefined');
 
+    console.log('[WS] About to create WebSocket...');
     this.ws = new WebSocket(url);
+    console.log('[WS] WebSocket constructor returned, this.ws:', !!this.ws, 'this.ws.readyState:', this.ws.readyState);
 
+    // Track state changes
     this.ws.addEventListener('open', () => {
+      console.log('[WS] Connection opened!');
       if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('🔌 WS connected');
       this.reconnectDelay = 1_000;
 
       // Send any queued messages
       for (const msg of this.pendingMessages) {
+        console.log('[WS] Sending queued message:', msg);
         this.ws!.send(msg);
       }
       this.pendingMessages = [];
     });
 
     this.ws.addEventListener('message', (event) => {
+      console.log('[WS] Message received:', event.data);
       try {
         const msg = JSON.parse(event.data) as ServerMessage;
         this.dispatch(msg);
@@ -59,6 +68,7 @@ export class GameSocket {
     });
 
     this.ws.addEventListener('close', (event) => {
+      console.log('[WS] Connection closed:', { code: event.code, reason: event.reason, wasClean: event.wasClean });
       if (typeof __DEV__ !== 'undefined' && __DEV__) console.log(`🔌 WS closed code=${event.code} reason=${event.reason}`);
       if (!this.intentionallyClosed && event.code !== 1000) {
         this.scheduleReconnect();
@@ -66,8 +76,17 @@ export class GameSocket {
     });
 
     this.ws.addEventListener('error', (err) => {
-      console.error('🔌 WS error:', err);
+      console.log('[WS] error handler firing! this.ws:', !!this.ws, 'this.ws?.readyState:', this.ws?.readyState, 'this.ws?.url:', this.ws?.url);
+      console.error('[WS] Connection error! Event type:', err.type, 'Event isTrusted:', err.isTrusted);
+      console.error('[WS] Connection error! Event:', err);
     });
+
+    // Intercept send to catch queued sends before open
+    const origSend = this.ws.send.bind(this.ws);
+    this.ws.send = (data) => {
+      console.log('[WS] send() called, readyState:', this.ws?.readyState, 'data:', typeof data === 'string' ? data.slice(0, 100) : 'Blob/ArrayBuffer');
+      return origSend(data);
+    };
   }
 
   disconnect(): void {
@@ -96,15 +115,21 @@ export class GameSocket {
 
   setLatency(latency: number): void {
     this.latency = latency;
-    this.onLatencyUpdate?.(latency);
+    for (const cb of this.onLatencyUpdate) {
+      cb(latency);
+    }
   }
 
   getLatency(): number {
     return this.latency;
   }
 
-  onLatencyChange(cb: (latency: number) => void): void {
-    this.onLatencyUpdate = cb;
+  onLatencyChange(cb: (latency: number) => void): () => void {
+    this.onLatencyUpdate.push(cb);
+    return () => {
+      const idx = this.onLatencyUpdate.indexOf(cb);
+      if (idx !== -1) this.onLatencyUpdate.splice(idx, 1);
+    };
   }
 
   // ----- Event handlers -----

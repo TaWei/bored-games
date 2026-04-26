@@ -56,6 +56,8 @@ export class GameLoop {
   private unsub: (() => void) | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private gameStartTime: number = 0;
+  /** Guard against concurrent checkAndStartGame calls (e.g. HTTP join + WS join racing) */
+  private startingGame = false;
   private messageHandlers: Map<string, (msg: ClientMessage, conn: Connection) => void>;
   /** Tracks the secret playerStates for the current Avalon game (server-side only) */
   private avalonPlayerStates: import('@bored-games/shared').AvalonPlayerState[] | null = null;
@@ -137,7 +139,7 @@ export class GameLoop {
     refreshTTL(this.roomCode).catch(console.error);
 
     // If room is waiting and has 2 players, start the game
-    this.checkAndStartGame().catch(console.error);
+    this.checkAndStartGame(sessionId).catch(console.error);
   }
 
   removeConnection(sessionId: string): void {
@@ -353,72 +355,94 @@ export class GameLoop {
     conn: Connection
   ): Promise<void> {
     await leaveRoom(this.roomCode, conn.sessionId);
+    (conn.ws.data as any).intentionallyLeft = true;
     this.removeConnection(conn.sessionId);
     conn.ws.close();
   }
 
   // ----- Game flow -----
 
-  private async checkAndStartGame(): Promise<void> {
+  private async checkAndStartGame(newSessionId?: string): Promise<void> {
+    // Guard against concurrent calls — if a game start is already in progress, skip
+    if (this.startingGame) {
+      console.log(`[GameLoop] checkAndStartGame — SKIP (already starting) room=${this.roomCode}`);
+      return;
+    }
+
     const room = await getRoom(this.roomCode);
+    console.log(`[GameLoop] checkAndStartGame — room=${this.roomCode} roomStatus=${room?.status} connections=${this.connections.size} players=${room?.players.length}`);
     if (!room) return;
 
     if (room.status === 'waiting') {
       // Normal path: wait for room to fill
       const minPlayers = getEngine(room.gameType).minPlayers;
+      console.log(`[GameLoop] waiting — minPlayers=${minPlayers} maxPlayers=${room.maxPlayers} this.connections=${this.connections.size}`);
       if (this.connections.size < minPlayers) return;
       if (room.players.length < room.maxPlayers) return;
 
+      // Mark as starting to block concurrent callers
+      this.startingGame = true;
+
       // Start the game!
-      await updateRoomStatus(this.roomCode, 'in_progress');
-      const engine = getEngine(room.gameType);
-      const playerIds = room.players.map((p) => p.sessionId);
-      this.state = engine.createInitialState(playerIds);
-      this.room = room;
-      this.gameStartTime = Date.now();
-      this.room.rematchRequests = [];
+      try {
+        const engine = getEngine(room.gameType);
+        const playerIds = room.players.map((p) => p.sessionId);
+        console.log(`[GameLoop] STARTING GAME — room=${this.roomCode} players=${playerIds.join(',')}`);
+        await updateRoomStatus(this.roomCode, 'in_progress');
+        this.state = engine.createInitialState(playerIds);
+        this.room = room;
+        this.gameStartTime = Date.now();
+        this.room.rematchRequests = [];
 
-      await saveGameState(this.roomCode, this.state);
+        await saveGameState(this.roomCode, this.state);
 
-      // ----- Avalon role assignment (server-side secret) -----
-      if (room.gameType === 'avalon') {
-        await this.assignAvalonRoles(room, playerIds);
-      }
-
-      // ----- Codenames grid generation (server-side secret) -----
-      if (room.gameType === 'codenames') {
-        await this.assignCodenamesRoles(room, playerIds);
-      }
-
-      // ----- Werewolf role assignment (server-side secret) -----
-      if (room.gameType === 'werewolf') {
-        await this.assignWerewolfRoles(room, playerIds);
-      }
-
-      await this.broadcast({
-        type: 'GAME_START',
-        payload: { state: this.state },
-      });
-
-      // Send individual ROOM_JOINED messages to each player with their own symbol
-      for (const conn of this.connections.values()) {
-        if (!conn.isSpectator) {
-          const playerSymbol = room.players.find((p) => p.sessionId === conn.sessionId)?.symbol ?? 'X';
-          await this.sendTo(conn.sessionId, {
-            type: 'ROOM_JOINED',
-            payload: {
-              room,
-              symbol: playerSymbol,
-              mySessionId: conn.sessionId,
-            },
-          });
+        // ----- Avalon role assignment (server-side secret) -----
+        if (room.gameType === 'avalon') {
+          await this.assignAvalonRoles(room, playerIds);
         }
-      }
 
-      // Start heartbeat monitoring
-      this.startHeartbeat();
+        // ----- Codenames grid generation (server-side secret) -----
+        if (room.gameType === 'codenames') {
+          await this.assignCodenamesRoles(room, playerIds);
+        }
+
+        // ----- Werewolf role assignment (server-side secret) -----
+        if (room.gameType === 'werewolf') {
+          await this.assignWerewolfRoles(room, playerIds);
+        }
+
+        await this.broadcast({
+          type: 'GAME_START',
+          payload: { state: this.state },
+        });
+
+        // Send individual ROOM_JOINED messages to each player with their own symbol
+        for (const conn of this.connections.values()) {
+          if (!conn.isSpectator) {
+            const playerSymbol = room.players.find((p) => p.sessionId === conn.sessionId)?.symbol ?? 'X';
+            await this.sendTo(conn.sessionId, {
+              type: 'ROOM_JOINED',
+              payload: {
+                room,
+                symbol: playerSymbol,
+                mySessionId: conn.sessionId,
+              },
+            });
+          }
+        }
+
+        // Start heartbeat monitoring
+        this.startHeartbeat();
+      } catch (err) {
+        console.error(`[GameLoop] checkAndStartGame error — room=${this.roomCode}:`, err);
+        this.startingGame = false;
+        throw err;
+      } finally {
+        this.startingGame = false;
+      }
     } else if (room.status === 'in_progress') {
       // Room already started (game started via HTTP before WS connected for all players)
+      console.log(`[GameLoop] in_progress branch — room=${this.roomCode} this.state=${!!this.state} connections=${this.connections.size}`);
       if (!this.room) {
         this.room = room;
       }
@@ -437,22 +461,38 @@ export class GameLoop {
       }
 
       // Send game state to the newly connected player
-      const conn = [...this.connections.values()].find(c => !c.isSpectator);
-      if (conn) {
-        const playerSymbol = room.players.find((p) => p.sessionId === conn.sessionId)?.symbol ?? 'X';
-        await this.sendTo(conn.sessionId, {
-          type: 'ROOM_JOINED',
-          payload: {
-            room,
-            symbol: playerSymbol,
-            mySessionId: conn.sessionId,
-          },
-        });
-
-        await this.sendTo(conn.sessionId, {
-          type: 'GAME_START',
-          payload: { state: this.state },
-        });
+      if (newSessionId) {
+        const conn = this.connections.get(newSessionId);
+        if (conn && !conn.isSpectator) {
+          const playerSymbol = room.players.find((p) => p.sessionId === conn.sessionId)?.symbol ?? 'X';
+          console.log(`[GameLoop] in_progress — sending ROOM_JOINED + GAME_START to session=${conn.sessionId}`);
+          await Promise.all([
+            this.sendTo(conn.sessionId, {
+              type: 'ROOM_JOINED' as const,
+              payload: {
+                room,
+                symbol: playerSymbol,
+                mySessionId: conn.sessionId,
+              },
+            }),
+            this.sendTo(conn.sessionId, {
+              type: 'GAME_START' as const,
+              payload: { state: this.state },
+            }),
+          ]);
+          console.log(`[GameLoop] in_progress — messages sent to session=${conn.sessionId}`);
+        } else {
+          console.log(`[GameLoop] in_progress — conn ${newSessionId} not found or is spectator`);
+        }
+      } else {
+        // Fallback: broadcast to all non-spectator connections (for legacy/Redis-triggered calls)
+        const conn = [...this.connections.values()].find(c => !c.isSpectator);
+        console.log(`[GameLoop] in_progress — fallback: conn for session ${conn?.sessionId} found=${!!conn}`);
+        if (conn) {
+          const playerSymbol = room.players.find((p) => p.sessionId === conn.sessionId)?.symbol ?? 'X';
+          await this.sendTo(conn.sessionId, { type: 'ROOM_JOINED', payload: { room, symbol: playerSymbol, mySessionId: conn.sessionId } });
+          await this.sendTo(conn.sessionId, { type: 'GAME_START', payload: { state: this.state } });
+        }
       }
 
       // Start heartbeat if not already running

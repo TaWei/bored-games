@@ -128,10 +128,9 @@ export async function joinRoom(
 
   room.players.push(player);
 
-  // If room is now full, start the game
-  if (room.players.length >= room.maxPlayers) {
-    room.status = 'in_progress';
-  }
+  // Note: room status transition to 'in_progress' is handled by
+  // GameLoop.checkAndStartGame() when the second player connects via WS.
+  // This ensures GAME_START is broadcast to ALL players, not just the new one.
 
   await redis.set(KEYS.room(code), JSON.stringify(room), 'PX', ROOM_TTL_MS);
 
@@ -207,10 +206,9 @@ export async function leaveRoom(
     room.hostSessionId = room.players[0]!.sessionId;
   }
 
-  // If player left mid-game, mark as abandoned
-  if (room.status === 'in_progress') {
-    room.status = 'abandoned';
-  }
+  // If player left mid-game, keep room available for reconnect
+  // The game loop will handle marking completed if players can't reconnect
+  // (Abandoned status is only set for explicit leave, not disconnect)
 
   await redis.set(KEYS.room(code), JSON.stringify(room), 'PX', ROOM_TTL_MS);
 
